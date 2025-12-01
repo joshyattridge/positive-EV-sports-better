@@ -130,7 +130,7 @@ class BrowserAutomation:
         result = await self.session.call_tool(tool_name, tool_args)
         return result
     
-    async def automate_task(self, task_description: str, max_iterations: int = 20) -> Dict[str, Any]:
+    async def automate_task(self, task_description: str, max_iterations: int = 40) -> Dict[str, Any]:
         """
         Automate a browser task using natural language description.
         
@@ -180,6 +180,25 @@ class BrowserAutomation:
                                 content_item["content"] = original_content[:50] + "...[old result truncated]"
         
             print(f"Sending messages to Claude (total messages: {len(messages)})...")
+            
+            # Calculate approximate token count (need to convert to JSON-serializable format)
+            def make_serializable(obj):
+                """Convert message objects to JSON-serializable format"""
+                if hasattr(obj, 'model_dump'):
+                    return obj.model_dump()
+                elif isinstance(obj, list):
+                    return [make_serializable(item) for item in obj]
+                elif isinstance(obj, dict):
+                    return {k: make_serializable(v) for k, v in obj.items()}
+                else:
+                    return str(obj)
+            
+            try:
+                serializable_messages = [make_serializable(m) for m in messages]
+                total_chars = sum(len(json.dumps(m)) for m in serializable_messages)
+                print(f"Approximate character count in all messages: {total_chars}")
+            except Exception as e:
+                print(f"Could not calculate message size: {e}")
             
             # Get Claude's response
             response = self.client.messages.create(
