@@ -147,7 +147,8 @@ class BrowserAutomation:
         system_prompt = (
             "You are a browser automation assistant. Use the available Playwright MCP tools "
             "to complete the user's browser automation tasks. Execute the tools step by step "
-            "and provide clear feedback on what you're doing."
+            "after every task each response must be one sentence long and to the point containing "
+            "of you completed the task or not and the next action to take. "
         )
         
         messages = [
@@ -162,6 +163,23 @@ class BrowserAutomation:
         
         for iteration in range(max_iterations):
             print(f"\n--- Iteration {iteration + 1} ---")
+
+            # Keep only initial message + last 4 messages (3 conversation cycles)
+            # This prevents exponential token growth while maintaining enough context
+            if len(messages) > 5:
+                messages = [messages[0]] + messages[-4:]
+            
+            # Truncate old tool results (keep only last tool result full, truncate older ones)
+            # This dramatically reduces token usage while keeping recent context
+            for i, message in enumerate(messages[:-1]):  # Skip the last message (most recent)
+                if message.get("role") == "user" and isinstance(message.get("content"), list):
+                    for content_item in message["content"]:
+                        if content_item.get("type") == "tool_result":
+                            original_content = content_item.get("content", "")
+                            if len(original_content) > 50:
+                                content_item["content"] = original_content[:50] + "...[old result truncated]"
+        
+            print(f"Sending messages to Claude (total messages: {len(messages)})...")
             
             # Get Claude's response
             response = self.client.messages.create(
@@ -203,16 +221,19 @@ class BrowserAutomation:
                             tool_result = str(result)
                         print(f"Tool result: {tool_result[:200]}...")
                         
+                        # Send FULL result to Claude initially (will be truncated in next iteration)
+                        # This way the latest result is always complete
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tool_call.id,
                             "content": tool_result
                         })
                         
+                        # Store FULL result in conversation history (not sent to API)
                         conversation_history.append({
                             "tool": tool_name,
                             "args": tool_args,
-                            "result": tool_result
+                            "result": tool_result  # Full result stored here
                         })
                         
                     except Exception as e:
