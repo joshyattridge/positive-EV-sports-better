@@ -1,14 +1,14 @@
 """
-Browser Automation using OpenAI API and Playwright MCP Server
+Browser Automation using Anthropic Claude API and Playwright MCP Server
 
 This module provides functionality to automate browser tasks using natural language
-instructions powered by OpenAI's API and executed via Microsoft's Playwright MCP server.
+instructions powered by Anthropic's Claude API and executed via Microsoft's Playwright MCP server.
 """
 
 import os
 import json
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
+from anthropic import Anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from dotenv import load_dotenv
@@ -19,22 +19,22 @@ load_dotenv()
 
 class BrowserAutomation:
     """
-    A class to automate browser tasks using OpenAI and Playwright MCP server.
+    A class to automate browser tasks using Anthropic Claude and Playwright MCP server.
     """
     
-    def __init__(self, openai_api_key: Optional[str] = None, headless: bool = False):
+    def __init__(self, anthropic_api_key: Optional[str] = None, headless: bool = False):
         """
         Initialize the browser automation client.
         
         Args:
-            openai_api_key: OpenAI API key. If not provided, will use OPENAI_API_KEY env var.
+            anthropic_api_key: Anthropic API key. If not provided, will use ANTHROPIC_API_KEY env var.
             headless: Whether to run browser in headless mode
         """
-        self.api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
-            raise ValueError("OpenAI API key must be provided or set in OPENAI_API_KEY environment variable")
+            raise ValueError("Anthropic API key must be provided or set in ANTHROPIC_API_KEY environment variable")
         
-        self.client = OpenAI(api_key=self.api_key)
+        self.client = Anthropic(api_key=self.api_key)
         self.session = None
         self.available_tools = []
         self.headless = headless
@@ -99,22 +99,19 @@ class BrowserAutomation:
         
         print("Browser closed")
     
-    def _convert_tools_for_openai(self) -> List[Dict[str, Any]]:
+    def _convert_tools_for_claude(self) -> List[Dict[str, Any]]:
         """
-        Convert MCP tools to OpenAI function calling format.
+        Convert MCP tools to Claude tool format.
         """
-        openai_tools = []
+        claude_tools = []
         for tool in self.available_tools:
-            openai_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description or "",
-                    "parameters": tool.inputSchema
-                }
+            claude_tool = {
+                "name": tool.name,
+                "description": tool.description or "",
+                "input_schema": tool.inputSchema
             }
-            openai_tools.append(openai_tool)
-        return openai_tools
+            claude_tools.append(claude_tool)
+        return claude_tools
     
     async def execute_tool_call(self, tool_name: str, tool_args: Dict[str, Any]) -> Any:
         """
@@ -147,62 +144,51 @@ class BrowserAutomation:
         if not self.session:
             await self.connect_to_playwright()
         
+        system_prompt = (
+            "You are a browser automation assistant. Use the available Playwright MCP tools "
+            "to complete the user's browser automation tasks. Execute the tools step by step "
+            "and provide clear feedback on what you're doing."
+        )
+        
         messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a browser automation assistant. Use the available Playwright MCP tools "
-                    "to complete the user's browser automation tasks. Execute the tools step by step "
-                    "and provide clear feedback on what you're doing."
-                )
-            },
             {
                 "role": "user",
                 "content": task_description
             }
         ]
         
-        openai_tools = self._convert_tools_for_openai()
+        claude_tools = self._convert_tools_for_claude()
         conversation_history = []
         
         for iteration in range(max_iterations):
             print(f"\n--- Iteration {iteration + 1} ---")
             
-            # Get OpenAI's response
-            response = self.client.chat.completions.create(
-                model="gpt-5.1",
+            # Get Claude's response
+            response = self.client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=4096,
+                system=system_prompt,
                 messages=messages,
-                tools=openai_tools,
-                tool_choice="auto"
+                tools=claude_tools
             )
             
-            assistant_message = response.choices[0].message
-            
-            # Convert to dict for messages list
-            message_dict = {
+            # Add assistant's response to messages
+            assistant_message = {
                 "role": "assistant",
-                "content": assistant_message.content
+                "content": response.content
             }
-            if assistant_message.tool_calls:
-                message_dict["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
-                        }
-                    } for tc in assistant_message.tool_calls
-                ]
-            messages.append(message_dict)
+            messages.append(assistant_message)
             
-            # Check if the assistant wants to call tools
-            if assistant_message.tool_calls:
-                print(f"Assistant is calling {len(assistant_message.tool_calls)} tool(s)...")
+            # Check if Claude wants to call tools
+            tool_calls = [block for block in response.content if block.type == "tool_use"]
+            
+            if tool_calls:
+                print(f"Assistant is calling {len(tool_calls)} tool(s)...")
                 
-                for tool_call in assistant_message.tool_calls:
-                    tool_name = tool_call.function.name
-                    tool_args = json.loads(tool_call.function.arguments)
+                tool_results = []
+                for tool_call in tool_calls:
+                    tool_name = tool_call.name
+                    tool_args = tool_call.input
                     
                     print(f"Calling tool: {tool_name}")
                     print(f"Arguments: {json.dumps(tool_args, indent=2)}")
@@ -217,10 +203,9 @@ class BrowserAutomation:
                             tool_result = str(result)
                         print(f"Tool result: {tool_result[:200]}...")
                         
-                        # Add tool result to messages
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.id,
                             "content": tool_result
                         })
                         
@@ -233,14 +218,22 @@ class BrowserAutomation:
                     except Exception as e:
                         error_msg = f"Error executing tool {tool_name}: {str(e)}"
                         print(error_msg)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": error_msg
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.id,
+                            "content": error_msg,
+                            "is_error": True
                         })
+                
+                # Add tool results to messages
+                messages.append({
+                    "role": "user",
+                    "content": tool_results
+                })
             else:
                 # No more tool calls, task is complete
-                final_response = assistant_message.content
+                text_content = [block.text for block in response.content if hasattr(block, 'text')]
+                final_response = ' '.join(text_content) if text_content else "Task completed"
                 print(f"\nTask completed: {final_response}")
                 
                 return {
