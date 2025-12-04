@@ -164,10 +164,10 @@ class BrowserAutomation:
         for iteration in range(max_iterations):
             print(f"\n--- Iteration {iteration + 1} ---")
 
-            # Keep only initial message + last 4 messages (3 conversation cycles)
-            # This prevents exponential token growth while maintaining enough context
-            if len(messages) > 5:
-                messages = [messages[0]] + messages[-4:]
+            # # Keep only initial message + last 4 messages (3 conversation cycles)
+            # # This prevents exponential token growth while maintaining enough context
+            # if len(messages) > 5:
+            #     messages = [messages[0]] + messages[-4:]
             
             # Truncate old tool results (keep only last tool result full, truncate older ones)
             # This dramatically reduces token usage while keeping recent context
