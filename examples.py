@@ -15,8 +15,8 @@ async def example_simple_navigation():
     
     try:
         task = """
-        Navigate to https://www.bet365.com/#/AC/B1/C1/D8/E184564042/F3/G40/
-        place a bet of £0.10 on Birmingham to win.
+        Navigate to https://www.bet365.com/#/AC/B1/C1/D8/E184907516/F3/
+        place a bet of £0.10 on Hull to win.
         username: ***REDACTED***
         password: ***REDACTED***
 
