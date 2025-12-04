@@ -66,10 +66,13 @@ class BrowserAutomation:
         # Initialize the connection
         await self.session.initialize()
         
-        # List available tools
+        # List available tools and filter out screenshot
         response = await self.session.list_tools()
-        self.available_tools = response.tools
-        print(f"Connected! {len(self.available_tools)} tools available")
+        self.available_tools = [
+            tool for tool in response.tools 
+            if tool.name != "browser_take_screenshot"
+        ]
+        print(f"Connected! {len(self.available_tools)} tools available (screenshot disabled)")
         
         return self.session
         
