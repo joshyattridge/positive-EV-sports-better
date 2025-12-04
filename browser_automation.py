@@ -8,6 +8,8 @@ instructions powered by Anthropic's Claude API and executed via Microsoft's Play
 import os
 import json
 from typing import Optional, Dict, Any, List
+from datetime import datetime
+from pathlib import Path
 from anthropic import Anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -22,13 +24,15 @@ class BrowserAutomation:
     A class to automate browser tasks using Anthropic Claude and Playwright MCP server.
     """
     
-    def __init__(self, anthropic_api_key: Optional[str] = None, headless: bool = False):
+    def __init__(self, anthropic_api_key: Optional[str] = None, headless: bool = False, 
+                 action_log_path: str = "action_logs.json"):
         """
         Initialize the browser automation client.
         
         Args:
             anthropic_api_key: Anthropic API key. If not provided, will use ANTHROPIC_API_KEY env var.
             headless: Whether to run browser in headless mode
+            action_log_path: Path to save successful action logs
         """
         self.api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
@@ -38,6 +42,8 @@ class BrowserAutomation:
         self.session = None
         self.available_tools = []
         self.headless = headless
+        self.action_log_path = Path(action_log_path)
+        self.action_logs = self._load_action_logs()
         
     async def connect_to_playwright(self):
         """
@@ -102,6 +108,91 @@ class BrowserAutomation:
         
         print("Browser closed")
     
+    def _load_action_logs(self) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Load action logs from disk.
+        
+        Returns:
+            Dictionary mapping action descriptions to lists of successful tool calls
+        """
+        if self.action_log_path.exists():
+            try:
+                with open(self.action_log_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load action logs: {e}")
+                return {}
+        return {}
+    
+    def _save_action_logs(self):
+        """
+        Save action logs to disk.
+        """
+        try:
+            with open(self.action_log_path, 'w') as f:
+                json.dump(self.action_logs, f, indent=2)
+            print(f"Action logs saved to {self.action_log_path}")
+        except Exception as e:
+            print(f"Warning: Could not save action logs: {e}")
+    
+    def record_successful_action(self, action_description: str, tool_calls: List[Dict[str, Any]]):
+        """
+        Record a successful action with its tool calls in a simple, human-readable format.
+        Args:
+            action_description: Description of the action (e.g., "login", "place bet", "select odds")
+            tool_calls: List of tool calls that successfully completed this action
+        """
+        if action_description not in self.action_logs:
+            self.action_logs[action_description] = []
+
+        # Convert tool_calls to simple strings
+        readable_calls = []
+        for call in tool_calls:
+            tool = call.get("tool", "?")
+            args = call.get("args", {})
+            # Try to extract a main element/target for readability
+            element = args.get("element") or args.get("name") or args.get("ref") or ""
+            text = args.get("text")
+            if tool == "browser_click":
+                desc = f"browser_click(\"{element or args}\")"
+            elif tool == "browser_type":
+                desc = f"browser_type(\"{element or args}\", \"{text or ''}\")"
+            else:
+                desc = f"{tool}({args})"
+            readable_calls.append(desc)
+
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "steps": readable_calls
+        }
+
+        self.action_logs[action_description].append(log_entry)
+        self._save_action_logs()
+        print(f"✓ Recorded successful action: {action_description}")
+    
+    def get_similar_actions(self, action_description: str) -> List[Dict[str, Any]]:
+        """
+        Get previously successful tool calls for similar actions.
+        
+        Args:
+            action_description: Description of the action to look up
+            
+        Returns:
+            List of previous successful tool call sequences
+        """
+        # Exact match
+        if action_description in self.action_logs:
+            return self.action_logs[action_description]
+        
+        # Fuzzy match (check if any logged action contains the description or vice versa)
+        matches = []
+        action_lower = action_description.lower()
+        for logged_action, entries in self.action_logs.items():
+            if action_lower in logged_action.lower() or logged_action.lower() in action_lower:
+                matches.extend(entries)
+        
+        return matches
+    
     def _convert_tools_for_claude(self) -> List[Dict[str, Any]]:
         """
         Convert MCP tools to Claude tool format.
@@ -147,17 +238,52 @@ class BrowserAutomation:
         if not self.session:
             await self.connect_to_playwright()
         
+        # Enhance task description with relevant action logs
+        enhanced_task = task_description
+        if self.action_logs:
+            # Extract keywords from task description to find relevant actions
+            task_lower = task_description.lower()
+            relevant_actions = {}
+            
+            for action_name, entries in self.action_logs.items():
+                # Include actions if they match keywords in the task
+                if any(keyword in task_lower for keyword in ['login', 'bet', 'odds', 'place', 'select', 'click', 'enter', 'fill']) or \
+                   any(keyword in action_name.lower() for keyword in task_lower.split()):
+                    # Get the most recent successful example
+                    if entries:
+                        relevant_actions[action_name] = entries[-1]['steps']
+            
+            if relevant_actions:
+                enhanced_task += "\n\n--- Previously Successful Actions (use as reference) ---\n"
+                for action_name, steps in relevant_actions.items():
+                    enhanced_task += f"\n{action_name}:\n"
+                    for step in steps:
+                        enhanced_task += f"  - {step}\n"
+                enhanced_task += "\n--- End of Reference Actions ---\n"
+                print(f"📚 Added {len(relevant_actions)} reference actions to task context")
+        
         system_prompt = (
             "You are a browser automation assistant. Use the available Playwright MCP tools "
             "to complete the user's browser automation tasks. Execute the tools step by step "
             "after every task each response must be one sentence long and to the point containing "
-            "of you completed the task or not and the next action to take. "
+            "of you completed the task or not and the next action to take.\n\n"
+            "CRITICAL: After EVERY SINGLE successful tool call (no matter how minor), you MUST include:\n"
+            "ACTION_SUCCESS: <action_name>\n"
+            "Examples:\n"
+            "- Opened login box → ACTION_SUCCESS: open_login\n"
+            "- Clicked button → ACTION_SUCCESS: click_button\n"
+            "- Entered username → ACTION_SUCCESS: enter_username\n"
+            "- Entered password → ACTION_SUCCESS: enter_password\n"
+            "- Submitted form → ACTION_SUCCESS: submit_form\n"
+            "- Selected odds → ACTION_SUCCESS: select_odds\n"
+            "- Placed bet → ACTION_SUCCESS: place_bet\n\n"
+            "Use descriptive, snake_case names. This helps the system learn from EVERY action for future automation."
         )
         
         messages = [
             {
                 "role": "user",
-                "content": task_description
+                "content": enhanced_task
             }
         ]
         
@@ -214,6 +340,18 @@ class BrowserAutomation:
             }
             messages.append(assistant_message)
             
+            # Check for ACTION_SUCCESS markers in assistant's text responses
+            text_blocks = [block.text for block in response.content if hasattr(block, 'text')]
+            for text in text_blocks:
+                if "ACTION_SUCCESS:" in text:
+                    try:
+                        action_name = text.split("ACTION_SUCCESS:")[1].strip().split()[0].strip()
+                        # Record only the LAST tool call (the one that just succeeded)
+                        last_tool_call = [conversation_history[-1]] if conversation_history else []
+                        self.record_successful_action(action_name, last_tool_call)
+                    except Exception as e:
+                        print(f"Warning: Could not parse ACTION_SUCCESS marker: {e}")
+            
             # Check if Claude wants to call tools
             tool_calls = [block for block in response.content if block.type == "tool_use"]
             
@@ -269,9 +407,24 @@ class BrowserAutomation:
                     "content": tool_results
                 })
             else:
-                # No more tool calls, task is complete
+                # No more tool calls, check if we have a text response
                 text_content = [block.text for block in response.content if hasattr(block, 'text')]
                 final_response = ' '.join(text_content) if text_content else "Task completed"
+                
+                # Check for ACTION_SUCCESS markers
+                if "ACTION_SUCCESS:" in final_response:
+                    try:
+                        # Extract action name from the response
+                        action_name = final_response.split("ACTION_SUCCESS:")[1].strip().split()[0].strip()
+                        
+                        # Record only the LAST tool call (the one that just succeeded)
+                        last_tool_call = [conversation_history[-1]] if conversation_history else []
+                        
+                        # Record the successful action
+                        self.record_successful_action(action_name, last_tool_call)
+                    except Exception as e:
+                        print(f"Warning: Could not parse ACTION_SUCCESS marker: {e}")
+                
                 print(f"\nTask completed: {final_response}")
                 
                 return {
