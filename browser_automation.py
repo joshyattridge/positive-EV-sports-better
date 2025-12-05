@@ -32,7 +32,7 @@ class BrowserAutomation:
         Args:
             anthropic_api_key: Anthropic API key. If not provided, will use ANTHROPIC_API_KEY env var.
             headless: Whether to run browser in headless mode
-            action_log_path: Path to save successful action logs
+            action_log_path: Path to save successful action logs (organized by run timestamp)
         """
         self.api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
@@ -43,6 +43,7 @@ class BrowserAutomation:
         self.available_tools = []
         self.headless = headless
         self.action_log_path = Path(action_log_path)
+        # Action logs structure: {timestamp: {action_name: [tool_calls]}}
         self.action_logs = self._load_action_logs()
         
     async def connect_to_playwright(self):
@@ -108,12 +109,12 @@ class BrowserAutomation:
         
         print("Browser closed")
     
-    def _load_action_logs(self) -> Dict[str, List[Dict[str, Any]]]:
+    def _load_action_logs(self) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
         """
         Load action logs from disk.
         
         Returns:
-            Dictionary mapping action descriptions to lists of successful tool calls
+            Dictionary mapping timestamps to action logs: {timestamp: {action_name: [tool_calls]}}
         """
         if self.action_log_path.exists():
             try:
@@ -135,12 +136,12 @@ class BrowserAutomation:
         except Exception as e:
             print(f"Warning: Could not save action logs: {e}")
     
-    def record_successful_action(self, action_description: str, tool_calls: List[Dict[str, Any]]):
+    def record_successful_action(self, run_timestamp: str, action_description: str, tool_calls: List[Dict[str, Any]]):
         """
-        Record a successful action with its tool calls in a simple, human-readable format.
-        Only keeps one recording per action type for the LLM to learn from.
+        Record a successful action with its tool calls under a specific run timestamp.
         
         Args:
+            run_timestamp: Timestamp identifying this run
             action_description: Description of the action (e.g., "login", "place bet", "select odds")
             tool_calls: List of tool calls that successfully completed this action
         """
@@ -155,33 +156,28 @@ class BrowserAutomation:
                 "args": args
             })
 
-        # Store only the steps, no timestamp, overwrite any previous recording
-        self.action_logs[action_description] = readable_calls
+        # Ensure the run timestamp exists in action logs
+        if run_timestamp not in self.action_logs:
+            self.action_logs[run_timestamp] = {}
+        
+        # Store the action under this run's timestamp
+        self.action_logs[run_timestamp][action_description] = readable_calls
         self._save_action_logs()
-        print(f"✓ Recorded successful action: {action_description}")
+        print(f"✓ Recorded successful action: {action_description} (run: {run_timestamp})")
     
-    def get_similar_actions(self, action_description: str) -> List[str]:
+    def get_all_action_examples(self) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Get previously successful tool calls for similar actions.
+        Get all action examples from all runs, flattened.
         
-        Args:
-            action_description: Description of the action to look up
-            
         Returns:
-            List of successful tool call steps
+            Dictionary mapping action names to their tool calls (most recent example per action)
         """
-        # Exact match
-        if action_description in self.action_logs:
-            return self.action_logs[action_description]
-        
-        # Fuzzy match (check if any logged action contains the description or vice versa)
-        matches = []
-        action_lower = action_description.lower()
-        for logged_action, steps in self.action_logs.items():
-            if action_lower in logged_action.lower() or logged_action.lower() in action_lower:
-                matches.extend(steps)
-        
-        return matches
+        all_actions = {}
+        # Iterate through all runs (timestamps) and collect actions
+        for run_timestamp, actions in self.action_logs.items():
+            # Update with actions from this run (later runs overwrite earlier ones)
+            all_actions.update(actions)
+        return all_actions
     
     def _convert_tools_for_claude(self) -> List[Dict[str, Any]]:
         """
@@ -228,14 +224,19 @@ class BrowserAutomation:
         if not self.session:
             await self.connect_to_playwright()
         
-        # Enhance task description with relevant action logs
+        # Generate timestamp for this run
+        run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        print(f"🕐 Run timestamp: {run_timestamp}")
+        
+        # Enhance task description with relevant action logs from all previous runs
         enhanced_task = task_description
-        if self.action_logs:
+        all_actions = self.get_all_action_examples()
+        if all_actions:
             # Extract keywords from task description to find relevant actions
             task_lower = task_description.lower()
             relevant_actions = {}
             
-            for action_name, steps in self.action_logs.items():
+            for action_name, steps in all_actions.items():
                 # Include actions if they match keywords in the task
                 if any(keyword in task_lower for keyword in ['login', 'bet', 'odds', 'place', 'select', 'click', 'enter', 'fill']) or \
                    any(keyword in action_name.lower() for keyword in task_lower.split()):
@@ -419,7 +420,7 @@ class BrowserAutomation:
                             action_name = text.split("ACTION_SUCCESS:")[1].strip().split()[0].strip()
                             # Record ALL tool calls from this batch (not just the last one)
                             if current_batch_tool_calls:
-                                self.record_successful_action(action_name, current_batch_tool_calls)
+                                self.record_successful_action(run_timestamp, action_name, current_batch_tool_calls)
                         except Exception as e:
                             print(f"Warning: Could not parse ACTION_SUCCESS marker: {e}")
             else:
@@ -437,7 +438,7 @@ class BrowserAutomation:
                         last_tool_call = [conversation_history[-1]] if conversation_history else []
                         
                         # Record the successful action
-                        self.record_successful_action(action_name, last_tool_call)
+                        self.record_successful_action(run_timestamp, action_name, last_tool_call)
                     except Exception as e:
                         print(f"Warning: Could not parse ACTION_SUCCESS marker: {e}")
                 
