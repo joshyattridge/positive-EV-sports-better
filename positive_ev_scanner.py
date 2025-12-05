@@ -123,6 +123,26 @@ class PositiveEVScanner:
         """
         return 1 / decimal_odds
     
+    def decimal_to_fractional(self, decimal_odds: float) -> str:
+        """
+        Convert decimal odds to fractional format.
+        
+        Args:
+            decimal_odds: Odds in decimal format (e.g., 3.50)
+            
+        Returns:
+            Fractional odds as string (e.g., "5/2")
+        """
+        from fractions import Fraction
+        
+        # Subtract 1 to get the profit ratio
+        profit_ratio = decimal_odds - 1
+        
+        # Convert to fraction and simplify
+        frac = Fraction(profit_ratio).limit_denominator(100)
+        
+        return f"{frac.numerator}/{frac.denominator}"
+    
     def calculate_ev(self, bet_odds: float, true_probability: float) -> float:
         """
         Calculate expected value of a bet.
@@ -394,12 +414,16 @@ class PositiveEVScanner:
             opps.sort(key=lambda x: x['ev_percentage'], reverse=True)
             
             for i, opp in enumerate(opps, 1):
+                # Convert odds to fractional
+                frac_odds = self.decimal_to_fractional(opp['odds'])
+                frac_sharp = self.decimal_to_fractional(opp['sharp_avg_odds'])
+                
                 print(f"{i}. 🎯 {opp['game']}")
                 print(f"   📅 {opp['commence_time']}")
                 print(f"   🎲 Market: {opp['market'].upper()}")
                 print(f"   🏆 Bet: {opp['outcome']}")
                 print(f"   💰 Bookmaker: {opp['bookmaker']}")
-                print(f"   📈 Odds: {opp['odds']:.2f} (Sharp Avg: {opp['sharp_avg_odds']:.2f})")
+                print(f"   📈 Odds: {opp['odds']:.2f} ({frac_odds}) | Sharp: {opp['sharp_avg_odds']:.2f} ({frac_sharp})")
                 print(f"   ✅ Expected Value: +{opp['ev_percentage']:.2f}%")
                 print(f"   🎲 True Probability: {opp['true_probability']:.1f}% | Bookmaker: {opp['bookmaker_probability']:.1f}%")
                 print(f"   🔗 Link: {opp['bookmaker_url']}")
