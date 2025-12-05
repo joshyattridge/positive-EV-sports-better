@@ -9,6 +9,11 @@ import requests
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import time
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class PositiveEVScanner:
@@ -17,44 +22,39 @@ class PositiveEVScanner:
     by comparing odds across sportsbooks.
     """
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str = None):
         """
         Initialize the scanner with The Odds API key.
         
         Args:
-            api_key: Your The Odds API key
+            api_key: Your The Odds API key (optional, will read from .env if not provided)
         """
-        self.api_key = api_key
+        # Read from environment variables if not provided
+        self.api_key = api_key or os.getenv('ODDS_API_KEY')
+        if not self.api_key:
+            raise ValueError("ODDS_API_KEY must be provided or set in .env file")
+        
         self.base_url = "https://api.the-odds-api.com/v4"
         
-        # Sharp bookmakers to use as baseline for "true odds"
-        # Tier 1: Pinnacle (sharpest), Betfair Exchange, Matchbook, Smarkets
-        self.sharp_books = [
-            'pinnacle',           # The gold standard - lowest vig, sharpest lines
-            'betfair_ex_uk',      # Betting exchange - peer-to-peer, very efficient
-            'betfair_ex_eu',      # Betfair EU exchange
-            'betfair_ex_au',      # Betfair AU exchange
-            'matchbook',          # Low commission exchange
-            'smarkets'            # Another sharp exchange
-        ]
+        # Sharp bookmakers - read from env or use defaults
+        sharp_books_str = os.getenv('SHARP_BOOKS', 'pinnacle,betfair_ex_uk,betfair_ex_eu,betfair_ex_au,matchbook,smarkets')
+        self.sharp_books = [book.strip() for book in sharp_books_str.split(',')]
         
-        # Minimum EV threshold (2% = 0.02)
-        self.min_ev_threshold = 0.02
+        # Betting bookmakers - read from env or use defaults
+        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', 'bet365,williamhill,ladbrokes_uk,coral,paddypower,skybet,betway,betvictor,unibet_uk,betfred,888sport')
+        self.betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
         
-        # UK bookmakers - Major/well-known brands only
-        self.uk_bookmakers = [
-            'bet365',             # Largest online bookmaker
-            'williamhill',        # UK's oldest bookmaker
-            'ladbrokes_uk',       # Major high street brand
-            'coral',              # Major high street brand
-            'paddypower',         # Major brand (Paddy Power Betfair)
-            'skybet',             # Sky Sports affiliated
-            'betway',             # Major sports sponsor
-            'betvictor',          # Established brand
-            'unibet_uk',          # Major European brand
-            'betfred',            # UK high street bookmaker
-            '888sport'            # 888 Holdings (public company)
-        ]
+        # Minimum EV threshold - read from env or use default
+        self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.02'))
+        
+        # API regions - read from env or use default
+        self.api_regions = os.getenv('API_REGIONS', 'us,uk,eu,au')
+        
+        # Markets - read from env or use default
+        self.markets = os.getenv('MARKETS', 'h2h,spreads,totals')
+        
+        # Odds format - read from env or use default
+        self.odds_format = os.getenv('ODDS_FORMAT', 'decimal')
         
     def get_available_sports(self) -> List[Dict]:
         """
@@ -90,9 +90,9 @@ class PositiveEVScanner:
         url = f"{self.base_url}/sports/{sport}/odds"
         params = {
             'apiKey': self.api_key,
-            'regions': 'us,uk,eu,au',  # Get sharp books from all regions
+            'regions': self.api_regions,
             'markets': markets,
-            'oddsFormat': 'decimal',
+            'oddsFormat': self.odds_format,
             'dateFormat': 'iso',
             'includeLinks': 'true'  # Get bookmaker links to events
         }
@@ -295,8 +295,8 @@ class PositiveEVScanner:
                         if odds_data['bookmaker'] in self.sharp_books:
                             continue  # Skip the sharp books themselves
                         
-                        # Only show opportunities for UK bookmakers
-                        if odds_data['bookmaker'] not in self.uk_bookmakers:
+                        # Only show opportunities for betting bookmakers
+                        if odds_data['bookmaker'] not in self.betting_bookmakers:
                             continue
                         
                         bet_odds = odds_data['odds']
@@ -333,28 +333,20 @@ class PositiveEVScanner:
         Scan multiple sports for +EV opportunities.
         
         Args:
-            sport_keys: List of sport keys to scan, or None to scan popular sports
+            sport_keys: List of sport keys to scan, or None to read from env
             
         Returns:
             Dictionary mapping sport to list of opportunities
         """
         if sport_keys is None:
-            # Focus on soccer leagues with best +EV opportunities
-            sport_keys = [
-                'soccer_epl',                    # English Premier League (best liquidity)
-                'soccer_england_championship',   # English Championship
-                'soccer_spain_la_liga',          # La Liga
-                'soccer_germany_bundesliga',     # Bundesliga
-                'soccer_italy_serie_a',          # Serie A
-                'soccer_france_ligue_one',       # Ligue 1
-                'soccer_uefa_champs_league',     # Champions League
-                'soccer_uefa_europa_league',     # Europa League
-            ]
+            # Read from environment variable or use defaults
+            betting_sports_str = os.getenv('BETTING_SPORTS', 'soccer_epl,soccer_england_championship,soccer_spain_la_liga,soccer_germany_bundesliga,soccer_italy_serie_a,soccer_france_ligue_one,soccer_uefa_champs_league,soccer_uefa_europa_league')
+            sport_keys = [sport.strip() for sport in betting_sports_str.split(',')]
         
         all_opportunities = {}
         
         for sport in sport_keys:
-            opportunities = self.find_positive_ev_opportunities(sport, markets='h2h,spreads,totals')
+            opportunities = self.find_positive_ev_opportunities(sport, markets=self.markets)
             if opportunities:
                 all_opportunities[sport] = opportunities
             
@@ -405,17 +397,16 @@ def main():
     """
     Main function to run the positive EV scanner.
     """
-    # Initialize scanner with API key
-    api_key = "***REDACTED***"
-    scanner = PositiveEVScanner(api_key)
+    # Initialize scanner (reads from .env file)
+    scanner = PositiveEVScanner()
     
     print("="*80)
-    print("⚽ POSITIVE EV SOCCER BETTING SCANNER")
+    print("⚽ POSITIVE EV BETTING SCANNER")
     print("="*80)
-    print("\nScanning soccer leagues for +EV opportunities...")
-    print("📊 Sharp books baseline: Pinnacle, Betfair Exchange, Matchbook, Smarkets (all regions)")
-    print("🇬🇧 Showing opportunities: UK bookmakers only")
-    print("⚽ Leagues: EPL, Championship, La Liga, Bundesliga, Serie A, Ligue 1, UCL, Europa")
+    print("\nScanning for +EV opportunities...")
+    print(f"📊 Sharp books baseline: {', '.join(scanner.sharp_books)}")
+    print(f"� Betting bookmakers: {', '.join(scanner.betting_bookmakers)}")
+    print(f"🏆 Sports/Leagues: {os.getenv('BETTING_SPORTS', 'soccer leagues')}")
     print(f"✅ Minimum EV threshold: {scanner.min_ev_threshold * 100}%")
     
     # Scan popular sports
