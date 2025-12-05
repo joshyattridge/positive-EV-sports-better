@@ -1,166 +1,254 @@
 {
-  "navigate_to_page": [
-    {
-      "tool": "browser_click",
-      "args": {
-        "element": "Log In button",
-        "ref": "e42"
+  "baseline": {
+    "open_login_modal": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e42"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 2
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_wait_for",
-      "args": {
-        "time": 2
+    ],
+    "login_to_account": [
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Password textbox",
+          "ref": "e1703",
+          "text": "***REDACTED***"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e1704"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ],
-  "open_login_modal": [
-    {
-      "tool": "browser_type",
-      "args": {
-        "element": "Password textbox",
-        "ref": "e1703",
-        "text": "***REDACTED***"
+    ],
+    "select_hull_bet": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Hull betting option with odds 2.90",
+          "ref": "e501"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_click",
-      "args": {
-        "element": "Log In button",
-        "ref": "e1704"
+    ],
+    "open_stake_input": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Set Stake button",
+          "ref": "e1733"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_wait_for",
-      "args": {
-        "time": 3
+    ],
+    "enter_stake": [
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('0.10');"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ],
-  "select_hull_bet": [
-    {
-      "tool": "browser_click",
-      "args": {
-        "element": "Set Stake button",
-        "ref": "e1732"
+    ],
+    "place_bet": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e1742"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_wait_for",
-      "args": {
-        "time": 1
+    ]
+  },
+  "20251205_174644": {
+    "navigate_to_page": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e42"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 2
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ],
-  "click_stake_input": [
-    {
-      "tool": "browser_run_code",
-      "args": {
-        "code": "await page.keyboard.type('0.10');"
+    ],
+    "open_login_modal": [
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Password textbox",
+          "ref": "e1699",
+          "text": "***REDACTED***"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e1700"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_wait_for",
-      "args": {
-        "time": 1
+    ],
+    "login_to_account": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Hull betting option with odds 2.90",
+          "ref": "e496"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ],
-  "enter_stake": [
-    {
-      "tool": "browser_click",
-      "args": {
-        "element": "Place Bet button",
-        "ref": "e1742"
+    ],
+    "select_hull_bet": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Set Stake button",
+          "ref": "e1733"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_wait_for",
-      "args": {
-        "time": 3
+    ],
+    "open_stake_input": [
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('0.10');"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ],
-  "login_to_account": [
-    {
-      "tool": "browser_click",
-      "args": {
-        "element": "Hull betting option with odds 2.90",
-        "ref": "e501"
+    ],
+    "enter_stake": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e1742"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_wait_for",
-      "args": {
-        "time": 1
+    ],
+    "place_bet": [
+      {
+        "tool": "browser_snapshot",
+        "args": {}
       }
-    },
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ],
-  "add_hull_to_bet_slip": [
-    {
-      "tool": "browser_click",
-      "args": {
-        "element": "Set Stake button",
-        "ref": "e1733"
-      }
-    },
-    {
-      "tool": "browser_wait_for",
-      "args": {
-        "time": 1
-      }
-    },
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ],
-  "open_stake_input": [
-    {
-      "tool": "browser_run_code",
-      "args": {
-        "code": "\n// Try to find and click on the stake input area more precisely\nconst stakeArea = await page.locator('.bs-StakeBox_InputText');\nif (await stakeArea.count() > 0) {\n  await stakeArea.first().click();\n}\n"
-      }
-    },
-    {
-      "tool": "browser_wait_for",
-      "args": {
-        "time": 1
-      }
-    },
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ],
-  "place_bet": [
-    {
-      "tool": "browser_snapshot",
-      "args": {}
-    }
-  ]
+    ]
+  }
 }
