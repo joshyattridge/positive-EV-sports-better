@@ -1,58 +1,10 @@
 {
   "navigate_to_bet365": [
-    {
-      "timestamp": "2025-12-04T20:48:57.015670",
-      "steps": [
-        "browser_navigate({'url': 'https://www.bet365.com/#/AC/B1/C1/D8/E184907516/F3/'})"
-      ]
-    },
-    {
-      "timestamp": "2025-12-04T20:53:23.385196",
-      "steps": [
-        "browser_navigate({'url': 'https://www.bet365.com/#/AC/B1/C1/D8/E184907516/F3/'})"
-      ]
-    }
+    "browser_navigate({'url': 'https://www.bet365.com/#/AC/B1/C1/D8/E184907516/F3/'})"
   ],
-  "page_snapshot_taken": [
-    {
-      "timestamp": "2025-12-04T20:49:02.435982",
-      "steps": [
-        "browser_snapshot({})"
-      ]
-    },
-    {
-      "timestamp": "2025-12-04T20:53:29.766135",
-      "steps": [
-        "browser_snapshot({})"
-      ]
-    }
-  ],
-  "open_login_form": [
-    {
-      "timestamp": "2025-12-04T20:49:08.113008",
-      "steps": [
-        "browser_click(\"Log In button\")"
-      ]
-    },
-    {
-      "timestamp": "2025-12-04T20:53:35.757982",
-      "steps": [
-        "browser_click(\"Log In button\")"
-      ]
-    }
-  ],
+  "page_snapshot_taken": ["browser_snapshot({})"],
+  "open_login_form": ["browser_click(\"Log In button\")"],
   "enter_password": [
-    {
-      "timestamp": "2025-12-04T20:49:12.570333",
-      "steps": [
-        "browser_type(\"Password textbox\", \"***REDACTED***\")"
-      ]
-    },
-    {
-      "timestamp": "2025-12-04T20:53:42.109914",
-      "steps": [
-        "browser_type(\"Password textbox\", \"***REDACTED***\")"
-      ]
-    }
+    "browser_type(\"Password textbox\", \"***REDACTED***\")"
   ]
 }
