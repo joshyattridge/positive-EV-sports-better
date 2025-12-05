@@ -138,13 +138,12 @@ class BrowserAutomation:
     def record_successful_action(self, action_description: str, tool_calls: List[Dict[str, Any]]):
         """
         Record a successful action with its tool calls in a simple, human-readable format.
+        Only keeps one recording per action type for the LLM to learn from.
+        
         Args:
             action_description: Description of the action (e.g., "login", "place bet", "select odds")
             tool_calls: List of tool calls that successfully completed this action
         """
-        if action_description not in self.action_logs:
-            self.action_logs[action_description] = []
-
         # Convert tool_calls to simple strings
         readable_calls = []
         for call in tool_calls:
@@ -161,16 +160,12 @@ class BrowserAutomation:
                 desc = f"{tool}({args})"
             readable_calls.append(desc)
 
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "steps": readable_calls
-        }
-
-        self.action_logs[action_description].append(log_entry)
+        # Store only the steps, no timestamp, overwrite any previous recording
+        self.action_logs[action_description] = readable_calls
         self._save_action_logs()
         print(f"✓ Recorded successful action: {action_description}")
     
-    def get_similar_actions(self, action_description: str) -> List[Dict[str, Any]]:
+    def get_similar_actions(self, action_description: str) -> List[str]:
         """
         Get previously successful tool calls for similar actions.
         
@@ -178,7 +173,7 @@ class BrowserAutomation:
             action_description: Description of the action to look up
             
         Returns:
-            List of previous successful tool call sequences
+            List of successful tool call steps
         """
         # Exact match
         if action_description in self.action_logs:
@@ -187,9 +182,9 @@ class BrowserAutomation:
         # Fuzzy match (check if any logged action contains the description or vice versa)
         matches = []
         action_lower = action_description.lower()
-        for logged_action, entries in self.action_logs.items():
+        for logged_action, steps in self.action_logs.items():
             if action_lower in logged_action.lower() or logged_action.lower() in action_lower:
-                matches.extend(entries)
+                matches.extend(steps)
         
         return matches
     
@@ -245,13 +240,13 @@ class BrowserAutomation:
             task_lower = task_description.lower()
             relevant_actions = {}
             
-            for action_name, entries in self.action_logs.items():
+            for action_name, steps in self.action_logs.items():
                 # Include actions if they match keywords in the task
                 if any(keyword in task_lower for keyword in ['login', 'bet', 'odds', 'place', 'select', 'click', 'enter', 'fill']) or \
                    any(keyword in action_name.lower() for keyword in task_lower.split()):
-                    # Get the most recent successful example
-                    if entries:
-                        relevant_actions[action_name] = entries[-1]['steps']
+                    # Store the successful steps
+                    if steps:
+                        relevant_actions[action_name] = steps
             
             if relevant_actions:
                 enhanced_task += "\n\n--- Previously Successful Actions (use as reference) ---\n"
