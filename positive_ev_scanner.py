@@ -343,6 +343,18 @@ class PositiveEVScanner:
                             # Calculate bookmaker's implied probability
                             bookmaker_probability = self.calculate_implied_probability(bet_odds)
                             
+                            # Collect sharp book links for verification
+                            sharp_links = []
+                            for sharp_data in odds_list:
+                                if sharp_data['bookmaker'] in self.sharp_books:
+                                    sharp_link = sharp_data.get('link')
+                                    if sharp_link:
+                                        sharp_links.append({
+                                            'name': sharp_data['title'],
+                                            'odds': sharp_data['odds'],
+                                            'link': sharp_link
+                                        })
+                            
                             opportunities.append({
                                 'sport': sport,
                                 'game': f"{away_team} @ {home_team}",
@@ -356,7 +368,8 @@ class PositiveEVScanner:
                                 'ev_percentage': ev * 100,
                                 'true_probability': true_probability * 100,
                                 'bookmaker_probability': bookmaker_probability * 100,
-                                'bookmaker_url': bookmaker_url
+                                'bookmaker_url': bookmaker_url,
+                                'sharp_links': sharp_links
                             })
         
         return opportunities
@@ -426,7 +439,17 @@ class PositiveEVScanner:
                 print(f"   📈 Odds: {opp['odds']:.2f} ({frac_odds}) | Sharp: {opp['sharp_avg_odds']:.2f} ({frac_sharp})")
                 print(f"   ✅ Expected Value: +{opp['ev_percentage']:.2f}%")
                 print(f"   🎲 True Probability: {opp['true_probability']:.1f}% | Bookmaker: {opp['bookmaker_probability']:.1f}%")
-                print(f"   🔗 Link: {opp['bookmaker_url']}")
+                print(f"   ")
+                print(f"   ➤ PLACE BET HERE: {opp['bookmaker_url']}")
+                
+                # Display sharp book links for verification
+                if opp['sharp_links']:
+                    print(f"   ")
+                    print(f"   📊 VERIFY WITH SHARP BOOKS:")
+                    for sharp in opp['sharp_links']:
+                        sharp_frac = self.decimal_to_fractional(sharp['odds'])
+                        print(f"      • {sharp['name']}: {sharp['odds']:.2f} ({sharp_frac}) - {sharp['link']}")
+                
                 print()
 
 
