@@ -144,21 +144,16 @@ class BrowserAutomation:
             action_description: Description of the action (e.g., "login", "place bet", "select odds")
             tool_calls: List of tool calls that successfully completed this action
         """
-        # Convert tool_calls to simple strings
+        # Store exact tool calls as the LLM returned them
         readable_calls = []
         for call in tool_calls:
             tool = call.get("tool", "?")
             args = call.get("args", {})
-            # Try to extract a main element/target for readability
-            element = args.get("element") or args.get("name") or args.get("ref") or ""
-            text = args.get("text")
-            if tool == "browser_click":
-                desc = f"browser_click(\"{element or args}\")"
-            elif tool == "browser_type":
-                desc = f"browser_type(\"{element or args}\", \"{text or ''}\")"
-            else:
-                desc = f"{tool}({args})"
-            readable_calls.append(desc)
+            # Just store the tool name and exact arguments as JSON
+            readable_calls.append({
+                "tool": tool,
+                "args": args
+            })
 
         # Store only the steps, no timestamp, overwrite any previous recording
         self.action_logs[action_description] = readable_calls
@@ -253,26 +248,44 @@ class BrowserAutomation:
                 for action_name, steps in relevant_actions.items():
                     enhanced_task += f"\n{action_name}:\n"
                     for step in steps:
-                        enhanced_task += f"  - {step}\n"
+                        # Format the tool call as JSON for the LLM to see exact structure
+                        enhanced_task += f"  {json.dumps(step)}\n"
                 enhanced_task += "\n--- End of Reference Actions ---\n"
                 print(f"📚 Added {len(relevant_actions)} reference actions to task context")
         
         system_prompt = (
             "You are a browser automation assistant. Use the available Playwright MCP tools "
-            "to complete the user's browser automation tasks. Execute the tools step by step "
-            "after every task each response must be one sentence long and to the point containing "
-            "of you completed the task or not and the next action to take.\n\n"
-            "CRITICAL: After EVERY SINGLE successful tool call (no matter how minor), you MUST include:\n"
+            "to complete the user's browser automation tasks.\n\n"
+            "🎯 FIRST RESPONSE STRATEGY 🎯\n"
+            "On your FIRST response, if you've been provided with 'Previously Successful Actions' in the task:\n"
+            "1. Analyze the action logs to understand the complete workflow\n"
+            "2. Attempt to execute ALL the necessary tool calls in ONE SHOT\n"
+            "3. Chain together all the actions from the logs that apply to this task\n"
+            "4. Only request a snapshot if you need to see the current page state\n\n"
+            "⚡ EFFICIENCY RULE - MINIMIZE API CALLS ⚡\n"
+            "You MUST batch multiple independent tool calls in a SINGLE response whenever possible.\n\n"
+            "DO batch together:\n"
+            "✓ Navigation + snapshot (navigate then immediately snapshot)\n"
+            "✓ Multiple form field fills (username, password, etc.)\n"
+            "✓ Snapshot + any click/type that doesn't need to see snapshot first\n"
+            "✓ Sequential actions from the action logs (click login, type password, click submit, etc.)\n"
+            "✓ Any actions where order doesn't matter\n\n"
+            "ONLY separate when:\n"
+            "✗ Next action requires reading the result of the previous one\n"
+            "✗ Page needs to load/change before next action\n"
+            "✗ You need to verify the page state with a snapshot\n\n"
+            "Keep text responses SHORT - one sentence max.\n\n"
+            "CRITICAL ACTION LOGGING:\n"
+            "When you call tools, include a text block in the SAME response with:\n"
             "ACTION_SUCCESS: <action_name>\n"
+            "The action_name MUST describe what the tools in THIS RESPONSE are doing, not previous actions.\n\n"
             "Examples:\n"
-            "- Opened login box → ACTION_SUCCESS: open_login\n"
-            "- Clicked button → ACTION_SUCCESS: click_button\n"
-            "- Entered username → ACTION_SUCCESS: enter_username\n"
-            "- Entered password → ACTION_SUCCESS: enter_password\n"
-            "- Submitted form → ACTION_SUCCESS: submit_form\n"
-            "- Selected odds → ACTION_SUCCESS: select_odds\n"
-            "- Placed bet → ACTION_SUCCESS: place_bet\n\n"
-            "Use descriptive, snake_case names. This helps the system learn from EVERY action for future automation."
+            "- If calling browser_type(password) + browser_click(login) → ACTION_SUCCESS: submit_login\n"
+            "- If calling browser_click(odds) → ACTION_SUCCESS: select_odds\n"
+            "- If calling browser_type(stake) + browser_click(place_bet) → ACTION_SUCCESS: place_bet\n"
+            "- If calling browser_navigate(url) + browser_snapshot() → ACTION_SUCCESS: navigate_to_page\n\n"
+            "Name should describe the COMPLETE action being performed by ALL tools in this response.\n"
+            "Use descriptive snake_case names. This helps the system learn from EVERY action."
         )
         
         messages = [
@@ -335,18 +348,6 @@ class BrowserAutomation:
             }
             messages.append(assistant_message)
             
-            # Check for ACTION_SUCCESS markers in assistant's text responses
-            text_blocks = [block.text for block in response.content if hasattr(block, 'text')]
-            for text in text_blocks:
-                if "ACTION_SUCCESS:" in text:
-                    try:
-                        action_name = text.split("ACTION_SUCCESS:")[1].strip().split()[0].strip()
-                        # Record only the LAST tool call (the one that just succeeded)
-                        last_tool_call = [conversation_history[-1]] if conversation_history else []
-                        self.record_successful_action(action_name, last_tool_call)
-                    except Exception as e:
-                        print(f"Warning: Could not parse ACTION_SUCCESS marker: {e}")
-            
             # Check if Claude wants to call tools
             tool_calls = [block for block in response.content if block.type == "tool_use"]
             
@@ -354,6 +355,7 @@ class BrowserAutomation:
                 print(f"Assistant is calling {len(tool_calls)} tool(s)...")
                 
                 tool_results = []
+                current_batch_tool_calls = []  # Track this batch of tool calls
                 for tool_call in tool_calls:
                     tool_name = tool_call.name
                     tool_args = tool_call.input
@@ -386,6 +388,13 @@ class BrowserAutomation:
                             "result": tool_result  # Full result stored here
                         })
                         
+                        # Also track for current batch (for recording)
+                        current_batch_tool_calls.append({
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "result": tool_result
+                        })
+                        
                     except Exception as e:
                         error_msg = f"Error executing tool {tool_name}: {str(e)}"
                         print(error_msg)
@@ -401,6 +410,18 @@ class BrowserAutomation:
                     "role": "user",
                     "content": tool_results
                 })
+                
+                # After executing tools, check for ACTION_SUCCESS markers in the assistant's text
+                text_blocks = [block.text for block in response.content if hasattr(block, 'text')]
+                for text in text_blocks:
+                    if "ACTION_SUCCESS:" in text:
+                        try:
+                            action_name = text.split("ACTION_SUCCESS:")[1].strip().split()[0].strip()
+                            # Record ALL tool calls from this batch (not just the last one)
+                            if current_batch_tool_calls:
+                                self.record_successful_action(action_name, current_batch_tool_calls)
+                        except Exception as e:
+                            print(f"Warning: Could not parse ACTION_SUCCESS marker: {e}")
             else:
                 # No more tool calls, check if we have a text response
                 text_content = [block.text for block in response.content if hasattr(block, 'text')]
