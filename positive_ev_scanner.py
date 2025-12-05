@@ -259,9 +259,12 @@ class PositiveEVScanner:
                 market_data = {}
                 
                 for bookmaker in bookmakers:
+                    # Get bookmaker-level link (least specific)
+                    bookmaker_link = bookmaker.get('link')
+                    
                     for market in bookmaker.get('markets', []):
                         if market['key'] == market_type:
-                            # Get the market link if available
+                            # Get market link (more specific)
                             market_link = market.get('link')
                             
                             for outcome in market.get('outcomes', []):
@@ -272,11 +275,17 @@ class PositiveEVScanner:
                                 if outcome_key not in market_data:
                                     market_data[outcome_key] = []
                                 
+                                # Get outcome/betslip link (most specific) - prioritize this
+                                outcome_link = outcome.get('link')
+                                
+                                # Use most specific link available: outcome > market > bookmaker > game
+                                best_link = outcome_link or market_link or bookmaker_link or game.get('link')
+                                
                                 market_data[outcome_key].append({
                                     'bookmaker': bookmaker['key'],
                                     'title': bookmaker['title'],
                                     'odds': outcome['price'],
-                                    'link': market_link  # Include link from API
+                                    'link': best_link  # Use most specific link available
                                 })
                 
                 # Analyze each outcome
@@ -311,6 +320,9 @@ class PositiveEVScanner:
                                 away_team
                             )
                             
+                            # Calculate bookmaker's implied probability
+                            bookmaker_probability = self.calculate_implied_probability(bet_odds)
+                            
                             opportunities.append({
                                 'sport': sport,
                                 'game': f"{away_team} @ {home_team}",
@@ -323,6 +335,7 @@ class PositiveEVScanner:
                                 'sharp_avg_odds': sharp_avg,
                                 'ev_percentage': ev * 100,
                                 'true_probability': true_probability * 100,
+                                'bookmaker_probability': bookmaker_probability * 100,
                                 'bookmaker_url': bookmaker_url
                             })
         
@@ -388,7 +401,7 @@ class PositiveEVScanner:
                 print(f"   💰 Bookmaker: {opp['bookmaker']}")
                 print(f"   📈 Odds: {opp['odds']:.2f} (Sharp Avg: {opp['sharp_avg_odds']:.2f})")
                 print(f"   ✅ Expected Value: +{opp['ev_percentage']:.2f}%")
-                print(f"   🎲 True Probability: {opp['true_probability']:.1f}%")
+                print(f"   🎲 True Probability: {opp['true_probability']:.1f}% | Bookmaker: {opp['bookmaker_probability']:.1f}%")
                 print(f"   🔗 Link: {opp['bookmaker_url']}")
                 print()
 
