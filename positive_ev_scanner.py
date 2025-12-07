@@ -11,6 +11,7 @@ from datetime import datetime
 import time
 import os
 from dotenv import load_dotenv
+from kelly_criterion import KellyCriterion
 
 # Load environment variables from .env file
 load_dotenv()
@@ -55,6 +56,12 @@ class PositiveEVScanner:
         
         # Odds format - read from env or use default
         self.odds_format = os.getenv('ODDS_FORMAT', 'decimal')
+        
+        # Kelly fraction - read from env or use default
+        self.kelly_fraction = float(os.getenv('KELLY_FRACTION', '1.0'))
+        
+        # Initialize Kelly Criterion calculator
+        self.kelly = KellyCriterion()
         
     def get_available_sports(self) -> List[Dict]:
         """
@@ -343,6 +350,20 @@ class PositiveEVScanner:
                             # Calculate bookmaker's implied probability
                             bookmaker_probability = self.calculate_implied_probability(bet_odds)
                             
+                            # Calculate Kelly Criterion stake
+                            kelly_stake = self.kelly.calculate_kelly_stake(
+                                decimal_odds=bet_odds,
+                                true_probability=true_probability,
+                                kelly_fraction=self.kelly_fraction
+                            )
+                            
+                            # Calculate expected profit
+                            expected_profit = self.kelly.calculate_expected_profit(
+                                stake=kelly_stake['recommended_stake'],
+                                decimal_odds=bet_odds,
+                                true_probability=true_probability
+                            )
+                            
                             # Collect sharp book links for verification
                             sharp_links = []
                             for sharp_data in odds_list:
@@ -369,7 +390,9 @@ class PositiveEVScanner:
                                 'true_probability': true_probability * 100,
                                 'bookmaker_probability': bookmaker_probability * 100,
                                 'bookmaker_url': bookmaker_url,
-                                'sharp_links': sharp_links
+                                'sharp_links': sharp_links,
+                                'kelly_stake': kelly_stake,
+                                'expected_profit': expected_profit
                             })
         
         return opportunities
@@ -431,6 +454,9 @@ class PositiveEVScanner:
                 frac_odds = self.decimal_to_fractional(opp['odds'])
                 frac_sharp = self.decimal_to_fractional(opp['sharp_avg_odds'])
                 
+                # Get Kelly stake info
+                kelly_info = opp['kelly_stake']
+                
                 print(f"{i}. 🎯 {opp['game']}")
                 print(f"   📅 {opp['commence_time']}")
                 print(f"   🎲 Market: {opp['market'].upper()}")
@@ -439,6 +465,12 @@ class PositiveEVScanner:
                 print(f"   📈 Odds: {opp['odds']:.2f} ({frac_odds}) | Sharp: {opp['sharp_avg_odds']:.2f} ({frac_sharp})")
                 print(f"   ✅ Expected Value: +{opp['ev_percentage']:.2f}%")
                 print(f"   🎲 True Probability: {opp['true_probability']:.1f}% | Bookmaker: {opp['bookmaker_probability']:.1f}%")
+                print(f"   ")
+                kelly_fraction_display = f"({self.kelly_fraction * 100:.0f}% Kelly)" if self.kelly_fraction != 1.0 else "(Full Kelly)"
+                print(f"   💵 RECOMMENDED BET SIZE {kelly_fraction_display}:")
+                print(f"      Stake: £{kelly_info['recommended_stake']:.2f}")
+                print(f"      Kelly %: {kelly_info['kelly_percentage']:.2f}% of bankroll")
+                print(f"      Expected Profit: £{opp['expected_profit']:.2f}")
                 print(f"   ")
                 print(f"   ➤ PLACE BET HERE: {opp['bookmaker_url']}")
                 
@@ -465,9 +497,11 @@ def main():
     print("="*80)
     print("\nScanning for +EV opportunities...")
     print(f"📊 Sharp books baseline: {', '.join(scanner.sharp_books)}")
-    print(f"� Betting bookmakers: {', '.join(scanner.betting_bookmakers)}")
+    print(f"🎰 Betting bookmakers: {', '.join(scanner.betting_bookmakers)}")
     print(f"🏆 Sports/Leagues: {os.getenv('BETTING_SPORTS', 'soccer leagues')}")
     print(f"✅ Minimum EV threshold: {scanner.min_ev_threshold * 100}%")
+    print(f"💰 Bankroll: £{scanner.kelly.bankroll:.2f}")
+    print(f"📐 Kelly Strategy: {scanner.kelly_fraction * 100:.0f}% Kelly ({scanner.kelly_fraction:.2f} fraction)")
     
     # Scan popular sports
     opportunities = scanner.scan_all_sports()

@@ -12,7 +12,8 @@ This project helps identify sports betting opportunities with positive expected 
 - 📊 Compare odds across multiple sportsbooks
 - 💰 Calculate expected value for betting opportunities
 - ✅ Identify positive EV bets
-- 📈 Track betting performance
+- � **Kelly Criterion Bankroll Management**: Optimal bet sizing using 100% Kelly Criterion
+- �📈 Track betting performance
 
 ## Browser Automation
 
@@ -47,7 +48,33 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env and add your OpenAI API key
+# Edit .env and add your API keys and bankroll settings
+```
+
+### Configuration
+
+Edit your `.env` file with the following settings:
+
+```bash
+# API Keys
+ODDS_API_KEY=your_odds_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Sharp Books (for true probability calculation)
+SHARP_BOOKS=pinnacle,betfair_ex_uk,betfair_ex_eu,betfair_ex_au
+
+# Betting Bookmakers (where to place bets)
+BETTING_BOOKMAKERS=bet365,williamhill,ladbrokes_uk,coral,paddypower,skybet
+
+# Sports/Leagues to scan
+BETTING_SPORTS=soccer_epl,soccer_spain_la_liga,soccer_germany_bundesliga
+
+# Minimum EV threshold (0.02 = 2%)
+MIN_EV_THRESHOLD=0.02
+
+# Kelly Criterion Bankroll Management
+BANKROLL=1000          # Your total betting bankroll
+KELLY_FRACTION=0.25    # Fraction of Kelly to use (0.25 = quarter Kelly, 0.5 = half Kelly, 1.0 = full Kelly)
 ```
 
 5. **Run an example**:
@@ -100,6 +127,54 @@ result = await automation.automate_task("""
     and take screenshots of the best opportunities
 """)
 ```
+
+## Kelly Criterion Bankroll Management
+
+The scanner uses the **Kelly Criterion** formula to calculate optimal bet sizing based on your edge:
+
+```
+f* = (bp - q) / b
+
+Where:
+- f* = fraction of bankroll to bet
+- b = decimal odds - 1
+- p = true probability of winning
+- q = probability of losing (1 - p)
+```
+
+### How It Works:
+
+- Set your **BANKROLL** in the `.env` file
+- Kelly calculates the optimal percentage to bet
+- Bet sizes scale with your actual bankroll
+
+### Features:
+
+- **Fractional Kelly**: Use 25% Kelly (recommended), 50% Kelly, or full Kelly
+- **Bankroll-Based**: All bets calculated as percentage of your total bankroll
+- **Expected Profit**: Shows anticipated return per bet
+- **Dynamic Sizing**: Bets automatically scale as your bankroll grows/shrinks
+- **Risk Management**: Lower fractions = less variance, more conservative
+
+### Kelly Fraction Guide:
+
+- **1.0 (Full Kelly)**: Maximum growth, but high variance - can lose 50%+ of bankroll
+- **0.5 (Half Kelly)**: Good balance of growth and safety - recommended for most
+- **0.25 (Quarter Kelly)**: Conservative approach - much lower variance
+- **0.1-0.2**: Very conservative - minimal risk
+
+### Example Output:
+
+```
+💵 RECOMMENDED BET SIZE (25% Kelly):
+   Stake: £11.38
+   Kelly %: 1.14% of bankroll
+   Expected Profit: £0.80
+```
+
+With a £1000 bankroll and 25% Kelly fraction:
+- Full Kelly would be 4.55% (£45.50)
+- 25% Kelly = 1.14% of bankroll = £11.38
 
 ## Getting Started
 
