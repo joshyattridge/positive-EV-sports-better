@@ -54,8 +54,8 @@ class PositiveEVScanner:
         # Markets - read from env or use default
         self.markets = os.getenv('MARKETS', 'h2h,spreads,totals')
         
-        # Odds format - read from env or use default
-        self.odds_format = os.getenv('ODDS_FORMAT', 'decimal')
+        # Odds format - hardcoded to decimal for EV calculations
+        self.odds_format = 'decimal'
         
         # Kelly fraction - read from env or use default
         self.kelly_fraction = float(os.getenv('KELLY_FRACTION', '1.0'))
