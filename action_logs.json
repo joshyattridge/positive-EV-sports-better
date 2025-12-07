@@ -1,314 +1,304 @@
 {
   "www.bet365.com": {
-    "baseline": {
-      "_all_tool_calls": [
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Log In button",
-            "ref": "e42"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 2
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_type",
-          "args": {
-            "element": "Password textbox",
-            "ref": "e1703",
-            "text": "***REDACTED***"
-          }
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Log In button",
-            "ref": "e1704"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 3
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Hull betting option with odds 2.90",
-            "ref": "e501"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 1
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Set Stake button",
-            "ref": "e1733"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 1
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_run_code",
-          "args": {
-            "code": "await page.keyboard.type('0.10');"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 1
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Place Bet button",
-            "ref": "e1742"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 3
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
+    "baseline": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e42"
         }
-      ]
-    },
-    "20251205_174644": {
-      "_all_tool_calls": [
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Log In button",
-            "ref": "e42"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 2
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_type",
-          "args": {
-            "element": "Password textbox",
-            "ref": "e1699",
-            "text": "***REDACTED***"
-          }
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Log In button",
-            "ref": "e1700"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 3
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Hull betting option with odds 2.90",
-            "ref": "e496"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 1
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Set Stake button",
-            "ref": "e1733"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 1
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_run_code",
-          "args": {
-            "code": "await page.keyboard.type('0.10');"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 1
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Place Bet button",
-            "ref": "e1742"
-          }
-        },
-        {
-          "tool": "browser_wait_for",
-          "args": {
-            "time": 3
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 2
         }
-      ]
-    }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Password textbox",
+          "ref": "e1703",
+          "text": "***REDACTED***"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e1704"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Hull betting option with odds 2.90",
+          "ref": "e501"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Set Stake button",
+          "ref": "e1733"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('0.10');"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e1742"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      }
+    ],
+    "20251205_174644": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e42"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 2
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Password textbox",
+          "ref": "e1699",
+          "text": "***REDACTED***"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e1700"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Hull betting option with odds 2.90",
+          "ref": "e496"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Set Stake button",
+          "ref": "e1733"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('0.10');"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 1
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e1742"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      }
+    ]
   },
   "www.sports.williamhill.com": {
-    "20251207_195635": {
-      "_all_tool_calls": [
-        {
-          "tool": "browser_snapshot",
-          "args": {}
+    "20251207_195635": [
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      }
+    ],
+    "20251207_200911": [
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e1337"
         }
-      ]
-    },
-    "20251207_200911": {
-      "_all_tool_calls": [
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Place Bet button",
-            "ref": "e1337"
-          }
+      }
+    ],
+    "20251207_211507": [
+      {
+        "tool": "browser_navigate",
+        "args": {
+          "url": "https://sports.williamhill.com/betting/en-gb/football/OB_EV37949982/bournemouth-vs-burnley"
         }
-      ]
-    },
-    "20251207_211507": {
-      "_all_tool_calls": [
-        {
-          "tool": "browser_navigate",
-          "args": {
-            "url": "https://sports.williamhill.com/betting/en-gb/football/OB_EV37949982/bournemouth-vs-burnley"
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Account login button",
-            "ref": "e56"
-          }
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Close button for account menu",
-            "ref": "e1268"
-          }
-        },
-        {
-          "tool": "browser_snapshot",
-          "args": {}
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Burnley at 11/2 button",
-            "ref": "e402"
-          }
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Stake input field",
-            "ref": "e1399"
-          }
-        },
-        {
-          "tool": "browser_run_code",
-          "args": {
-            "code": "await page.keyboard.type('0.25');"
-          }
-        },
-        {
-          "tool": "browser_click",
-          "args": {
-            "element": "Place Bet button",
-            "ref": "e1406"
-          }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Account login button",
+          "ref": "e56"
         }
-      ]
-    }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Close button for account menu",
+          "ref": "e1268"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Burnley at 11/2 button",
+          "ref": "e402"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Stake input field",
+          "ref": "e1399"
+        }
+      },
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('0.25');"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e1406"
+        }
+      }
+    ]
   }
 }

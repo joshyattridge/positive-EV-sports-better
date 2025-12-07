@@ -198,13 +198,9 @@ class BrowserAutomation:
         if website not in self.action_logs:
             self.action_logs[website] = {}
         
-        # Ensure the run timestamp exists under this website
+        # Ensure the run timestamp exists under this website as an array
         if run_timestamp not in self.action_logs[website]:
-            self.action_logs[website][run_timestamp] = {}
-        
-        # Create a special key for all tool calls
-        if "_all_tool_calls" not in self.action_logs[website][run_timestamp]:
-            self.action_logs[website][run_timestamp]["_all_tool_calls"] = []
+            self.action_logs[website][run_timestamp] = []
         
         # Record the tool call (just tool name and args)
         tool_call_record = {
@@ -212,7 +208,7 @@ class BrowserAutomation:
             "args": tool_args
         }
         
-        self.action_logs[website][run_timestamp]["_all_tool_calls"].append(tool_call_record)
+        self.action_logs[website][run_timestamp].append(tool_call_record)
         
         # Save after each tool call to ensure we don't lose data (but don't spam the console)
         try:
@@ -236,15 +232,15 @@ class BrowserAutomation:
         # If website specified, only look at that website's logs
         if website:
             if website in self.action_logs:
-                for run_timestamp, run_data in self.action_logs[website].items():
-                    if "_all_tool_calls" in run_data:
-                        all_tool_calls.extend(run_data["_all_tool_calls"])
+                for run_timestamp, tool_calls in self.action_logs[website].items():
+                    if isinstance(tool_calls, list):
+                        all_tool_calls.extend(tool_calls)
         else:
             # Get tool calls from all websites
             for website_name, website_logs in self.action_logs.items():
-                for run_timestamp, run_data in website_logs.items():
-                    if "_all_tool_calls" in run_data:
-                        all_tool_calls.extend(run_data["_all_tool_calls"])
+                for run_timestamp, tool_calls in website_logs.items():
+                    if isinstance(tool_calls, list):
+                        all_tool_calls.extend(tool_calls)
         
         return all_tool_calls
     
@@ -491,7 +487,7 @@ class BrowserAutomation:
                 # Print summary of recorded tool calls
                 website = self.current_website or "unknown"
                 if website in self.action_logs and run_timestamp in self.action_logs[website]:
-                    total_tools = len(self.action_logs[website][run_timestamp].get("_all_tool_calls", []))
+                    total_tools = len(self.action_logs[website][run_timestamp])
                     print(f"📝 Recorded {total_tools} tool calls to action_logs.json")
                 
                 return {
@@ -504,7 +500,7 @@ class BrowserAutomation:
         # Print summary even if max iterations reached
         website = self.current_website or "unknown"
         if website in self.action_logs and run_timestamp in self.action_logs[website]:
-            total_tools = len(self.action_logs[website][run_timestamp].get("_all_tool_calls", []))
+            total_tools = len(self.action_logs[website][run_timestamp])
             print(f"📝 Recorded {total_tools} tool calls to action_logs.json")
         
         return {
