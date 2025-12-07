@@ -252,5 +252,26 @@
         }
       ]
     }
+  },
+  "www.sports.williamhill.com": {
+    "20251207_195635": {
+      "failed_login_invalid_credentials": [
+        {
+          "tool": "browser_snapshot",
+          "args": {}
+        }
+      ]
+    },
+    "20251207_200911": {
+      "place_bet_williamhill_wolves_win": [
+        {
+          "tool": "browser_click",
+          "args": {
+            "element": "Place Bet button",
+            "ref": "e1337"
+          }
+        }
+      ]
+    }
   }
 }
