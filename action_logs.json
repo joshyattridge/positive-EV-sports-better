@@ -1,7 +1,7 @@
 {
   "www.bet365.com": {
     "baseline": {
-      "open_login_modal": [
+      "_all_tool_calls": [
         {
           "tool": "browser_click",
           "args": {
@@ -18,9 +18,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "login_to_account": [
+        },
         {
           "tool": "browser_type",
           "args": {
@@ -45,9 +43,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "select_hull_bet": [
+        },
         {
           "tool": "browser_click",
           "args": {
@@ -64,9 +60,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "open_stake_input": [
+        },
         {
           "tool": "browser_click",
           "args": {
@@ -83,9 +77,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "enter_stake": [
+        },
         {
           "tool": "browser_run_code",
           "args": {
@@ -101,9 +93,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "place_bet": [
+        },
         {
           "tool": "browser_click",
           "args": {
@@ -124,7 +114,7 @@
       ]
     },
     "20251205_174644": {
-      "navigate_to_page": [
+      "_all_tool_calls": [
         {
           "tool": "browser_click",
           "args": {
@@ -141,9 +131,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "open_login_modal": [
+        },
         {
           "tool": "browser_type",
           "args": {
@@ -168,9 +156,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "login_to_account": [
+        },
         {
           "tool": "browser_click",
           "args": {
@@ -187,9 +173,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "select_hull_bet": [
+        },
         {
           "tool": "browser_click",
           "args": {
@@ -206,9 +190,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "open_stake_input": [
+        },
         {
           "tool": "browser_run_code",
           "args": {
@@ -224,9 +206,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "enter_stake": [
+        },
         {
           "tool": "browser_click",
           "args": {
@@ -243,9 +223,7 @@
         {
           "tool": "browser_snapshot",
           "args": {}
-        }
-      ],
-      "place_bet": [
+        },
         {
           "tool": "browser_snapshot",
           "args": {}
@@ -255,7 +233,7 @@
   },
   "www.sports.williamhill.com": {
     "20251207_195635": {
-      "failed_login_invalid_credentials": [
+      "_all_tool_calls": [
         {
           "tool": "browser_snapshot",
           "args": {}
@@ -263,12 +241,71 @@
       ]
     },
     "20251207_200911": {
-      "place_bet_williamhill_wolves_win": [
+      "_all_tool_calls": [
         {
           "tool": "browser_click",
           "args": {
             "element": "Place Bet button",
             "ref": "e1337"
+          }
+        }
+      ]
+    },
+    "20251207_211507": {
+      "_all_tool_calls": [
+        {
+          "tool": "browser_navigate",
+          "args": {
+            "url": "https://sports.williamhill.com/betting/en-gb/football/OB_EV37949982/bournemouth-vs-burnley"
+          }
+        },
+        {
+          "tool": "browser_snapshot",
+          "args": {}
+        },
+        {
+          "tool": "browser_click",
+          "args": {
+            "element": "Account login button",
+            "ref": "e56"
+          }
+        },
+        {
+          "tool": "browser_click",
+          "args": {
+            "element": "Close button for account menu",
+            "ref": "e1268"
+          }
+        },
+        {
+          "tool": "browser_snapshot",
+          "args": {}
+        },
+        {
+          "tool": "browser_click",
+          "args": {
+            "element": "Burnley at 11/2 button",
+            "ref": "e402"
+          }
+        },
+        {
+          "tool": "browser_click",
+          "args": {
+            "element": "Stake input field",
+            "ref": "e1399"
+          }
+        },
+        {
+          "tool": "browser_run_code",
+          "args": {
+            "code": "await page.keyboard.type('0.25');"
+          }
+        },
+        {
+          "tool": "browser_click",
+          "args": {
+            "element": "Place Bet button",
+            "ref": "e1406"
           }
         }
       ]

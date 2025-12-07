@@ -181,26 +181,16 @@ class BrowserAutomation:
         self.current_website = self._extract_domain(url)
         print(f"🌐 Current website: {self.current_website}")
     
-    def record_successful_action(self, run_timestamp: str, action_description: str, tool_calls: List[Dict[str, Any]]):
+    def record_tool_call(self, run_timestamp: str, tool_name: str, tool_args: Dict[str, Any]):
         """
-        Record a successful action with its tool calls under the current website and run timestamp.
+        Record every single tool call that is executed, regardless of success or LLM markers.
+        This provides a complete audit trail of all browser actions.
         
         Args:
             run_timestamp: Timestamp identifying this run
-            action_description: Description of the action (e.g., "login", "place bet", "select odds")
-            tool_calls: List of tool calls that successfully completed this action
+            tool_name: Name of the tool that was called
+            tool_args: Arguments passed to the tool
         """
-        # Store exact tool calls as the LLM returned them
-        readable_calls = []
-        for call in tool_calls:
-            tool = call.get("tool", "?")
-            args = call.get("args", {})
-            # Just store the tool name and exact arguments as JSON
-            readable_calls.append({
-                "tool": tool,
-                "args": args
-            })
-
         # Use current website or "unknown" if not set
         website = self.current_website or "unknown"
         
@@ -212,37 +202,51 @@ class BrowserAutomation:
         if run_timestamp not in self.action_logs[website]:
             self.action_logs[website][run_timestamp] = {}
         
-        # Store the action under this website's run timestamp
-        self.action_logs[website][run_timestamp][action_description] = readable_calls
-        self._save_action_logs()
-        print(f"✓ Recorded successful action: {action_description} (website: {website}, run: {run_timestamp})")
+        # Create a special key for all tool calls
+        if "_all_tool_calls" not in self.action_logs[website][run_timestamp]:
+            self.action_logs[website][run_timestamp]["_all_tool_calls"] = []
+        
+        # Record the tool call (just tool name and args)
+        tool_call_record = {
+            "tool": tool_name,
+            "args": tool_args
+        }
+        
+        self.action_logs[website][run_timestamp]["_all_tool_calls"].append(tool_call_record)
+        
+        # Save after each tool call to ensure we don't lose data (but don't spam the console)
+        try:
+            with open(self.action_log_path, 'w') as f:
+                json.dump(self.action_logs, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save tool call log: {e}")
     
-    def get_all_action_examples(self, website: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    def get_all_tool_calls(self, website: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Get all action examples from all runs, optionally filtered by website.
+        Get all tool calls from previous runs, optionally filtered by website.
         
         Args:
             website: Optional website domain to filter by (e.g., "example.com")
         
         Returns:
-            Dictionary mapping action names to their tool calls (most recent example per action)
+            List of all tool calls from previous runs
         """
-        all_actions = {}
+        all_tool_calls = []
         
         # If website specified, only look at that website's logs
         if website:
             if website in self.action_logs:
-                for run_timestamp, actions in self.action_logs[website].items():
-                    # Update with actions from this run (later runs overwrite earlier ones)
-                    all_actions.update(actions)
+                for run_timestamp, run_data in self.action_logs[website].items():
+                    if "_all_tool_calls" in run_data:
+                        all_tool_calls.extend(run_data["_all_tool_calls"])
         else:
-            # Get actions from all websites
+            # Get tool calls from all websites
             for website_name, website_logs in self.action_logs.items():
-                for run_timestamp, actions in website_logs.items():
-                    # Update with actions from this run (later runs overwrite earlier ones)
-                    all_actions.update(actions)
+                for run_timestamp, run_data in website_logs.items():
+                    if "_all_tool_calls" in run_data:
+                        all_tool_calls.extend(run_data["_all_tool_calls"])
         
-        return all_actions
+        return all_tool_calls
     
     def _convert_tools_for_claude(self) -> List[Dict[str, Any]]:
         """
@@ -301,40 +305,28 @@ class BrowserAutomation:
             full_url = url_match.group(0)
             self.update_current_website(full_url)
         
-        # Enhance task description with relevant action logs from current website or all websites
+        # Enhance task description with tool calls from previous runs on this website
         enhanced_task = task_description
-        all_actions = self.get_all_action_examples(website=self.current_website)
-        if all_actions:
-            # Extract keywords from task description to find relevant actions
-            task_lower = task_description.lower()
-            relevant_actions = {}
+        previous_tool_calls = self.get_all_tool_calls(website=self.current_website)
+        if previous_tool_calls:
+            # Limit to most recent tool calls to avoid token overflow (last 50 calls)
+            recent_calls = previous_tool_calls[-50:] if len(previous_tool_calls) > 50 else previous_tool_calls
             
-            for action_name, steps in all_actions.items():
-                # Include actions if they match keywords in the task
-                if any(keyword in task_lower for keyword in ['login', 'bet', 'odds', 'place', 'select', 'click', 'enter', 'fill']) or \
-                   any(keyword in action_name.lower() for keyword in task_lower.split()):
-                    # Store the successful steps
-                    if steps:
-                        relevant_actions[action_name] = steps
-            
-            if relevant_actions:
-                enhanced_task += "\n\n--- Previously Successful Actions (use as reference) ---\n"
-                for action_name, steps in relevant_actions.items():
-                    enhanced_task += f"\n{action_name}:\n"
-                    for step in steps:
-                        # Format the tool call as JSON for the LLM to see exact structure
-                        enhanced_task += f"  {json.dumps(step)}\n"
-                enhanced_task += "\n--- End of Reference Actions ---\n"
-                print(f"📚 Added {len(relevant_actions)} reference actions to task context")
+            if recent_calls:
+                enhanced_task += "\n\n--- Previously Executed Tool Calls (use as reference) ---\n"
+                for call in recent_calls:
+                    enhanced_task += f"  {json.dumps(call)}\n"
+                enhanced_task += "\n--- End of Reference Tool Calls ---\n"
+                print(f"📚 Added {len(recent_calls)} previous tool calls to task context")
         
         system_prompt = (
             "You are a browser automation assistant. Use the available Playwright MCP tools "
             "to complete the user's browser automation tasks.\n\n"
             "🎯 FIRST RESPONSE STRATEGY 🎯\n"
-            "On your FIRST response, if you've been provided with 'Previously Successful Actions' in the task:\n"
-            "1. Analyze the action logs to understand the complete workflow\n"
+            "On your FIRST response, if you've been provided with 'Previously Executed Tool Calls' in the task:\n"
+            "1. Analyze the tool call history to understand what worked before\n"
             "2. Attempt to execute ALL the necessary tool calls in ONE SHOT\n"
-            "3. Chain together all the actions from the logs that apply to this task\n"
+            "3. Chain together similar actions from the history that apply to this task\n"
             "4. Only request a snapshot if you need to see the current page state\n\n"
             "⚡ EFFICIENCY RULE - MINIMIZE API CALLS ⚡\n"
             "You MUST batch multiple independent tool calls in a SINGLE response whenever possible.\n\n"
@@ -353,18 +345,7 @@ class BrowserAutomation:
             "When entering stake amounts in betting forms, use the browser_run_code tool with:\n"
             "await page.keyboard.type('0.10');\n"
             "This works more reliably than trying to enter the amount once the field is focused.\n"
-            "Example: To bet £0.09, use: await page.keyboard.type('0.09');\n\n"
-            "CRITICAL ACTION LOGGING:\n"
-            "When you call tools, include a text block in the SAME response with:\n"
-            "ACTION_SUCCESS: <action_name>\n"
-            "The action_name MUST describe what the tools in THIS RESPONSE are doing, not previous actions.\n\n"
-            "Examples:\n"
-            "- If calling browser_type(password) + browser_click(login) → ACTION_SUCCESS: submit_login\n"
-            "- If calling browser_click(odds) → ACTION_SUCCESS: select_odds\n"
-            "- If calling browser_type(stake) + browser_click(place_bet) → ACTION_SUCCESS: place_bet\n"
-            "- If calling browser_navigate(url) + browser_snapshot() → ACTION_SUCCESS: navigate_to_page\n\n"
-            "Name should describe the COMPLETE action being performed by ALL tools in this response.\n"
-            "Use descriptive snake_case names. This helps the system learn from EVERY action."
+            "Example: To bet £0.09, use: await page.keyboard.type('0.09');"
         )
         
         messages = [
@@ -456,6 +437,9 @@ class BrowserAutomation:
                             tool_result = str(result)
                         print(f"Tool result: {tool_result[:200]}...")
                         
+                        # 🆕 RECORD EVERY TOOL CALL AUTOMATICALLY
+                        self.record_tool_call(run_timestamp, tool_name, tool_args)
+                        
                         # Send FULL result to Claude initially (will be truncated in next iteration)
                         # This way the latest result is always complete
                         tool_results.append({
@@ -481,6 +465,10 @@ class BrowserAutomation:
                     except Exception as e:
                         error_msg = f"Error executing tool {tool_name}: {str(e)}"
                         print(error_msg)
+                        
+                        # 🆕 RECORD FAILED TOOL CALLS TOO
+                        self.record_tool_call(run_timestamp, tool_name, tool_args)
+                        
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tool_call.id,
@@ -493,38 +481,18 @@ class BrowserAutomation:
                     "role": "user",
                     "content": tool_results
                 })
-                
-                # After executing tools, check for ACTION_SUCCESS markers in the assistant's text
-                text_blocks = [block.text for block in response.content if hasattr(block, 'text')]
-                for text in text_blocks:
-                    if "ACTION_SUCCESS:" in text:
-                        try:
-                            action_name = text.split("ACTION_SUCCESS:")[1].strip().split()[0].strip()
-                            # Record ALL tool calls from this batch (not just the last one)
-                            if current_batch_tool_calls:
-                                self.record_successful_action(run_timestamp, action_name, current_batch_tool_calls)
-                        except Exception as e:
-                            print(f"Warning: Could not parse ACTION_SUCCESS marker: {e}")
             else:
                 # No more tool calls, check if we have a text response
                 text_content = [block.text for block in response.content if hasattr(block, 'text')]
                 final_response = ' '.join(text_content) if text_content else "Task completed"
                 
-                # Check for ACTION_SUCCESS markers
-                if "ACTION_SUCCESS:" in final_response:
-                    try:
-                        # Extract action name from the response
-                        action_name = final_response.split("ACTION_SUCCESS:")[1].strip().split()[0].strip()
-                        
-                        # Record only the LAST tool call (the one that just succeeded)
-                        last_tool_call = [conversation_history[-1]] if conversation_history else []
-                        
-                        # Record the successful action
-                        self.record_successful_action(run_timestamp, action_name, last_tool_call)
-                    except Exception as e:
-                        print(f"Warning: Could not parse ACTION_SUCCESS marker: {e}")
-                
                 print(f"\nTask completed: {final_response}")
+                
+                # Print summary of recorded tool calls
+                website = self.current_website or "unknown"
+                if website in self.action_logs and run_timestamp in self.action_logs[website]:
+                    total_tools = len(self.action_logs[website][run_timestamp].get("_all_tool_calls", []))
+                    print(f"📝 Recorded {total_tools} tool calls to action_logs.json")
                 
                 return {
                     "success": True,
@@ -532,6 +500,12 @@ class BrowserAutomation:
                     "conversation_history": conversation_history,
                     "iterations": iteration + 1
                 }
+        
+        # Print summary even if max iterations reached
+        website = self.current_website or "unknown"
+        if website in self.action_logs and run_timestamp in self.action_logs[website]:
+            total_tools = len(self.action_logs[website][run_timestamp].get("_all_tool_calls", []))
+            print(f"📝 Recorded {total_tools} tool calls to action_logs.json")
         
         return {
             "success": False,
