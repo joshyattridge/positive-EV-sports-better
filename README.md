@@ -173,6 +173,7 @@ Where:
 ```
 
 With a £1000 bankroll and 25% Kelly fraction:
+
 - Full Kelly would be 4.55% (£45.50)
 - 25% Kelly = 1.14% of bankroll = £11.38
 
