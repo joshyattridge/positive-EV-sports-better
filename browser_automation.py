@@ -32,7 +32,7 @@ class BrowserAutomation:
         Args:
             anthropic_api_key: Anthropic API key. If not provided, will use ANTHROPIC_API_KEY env var.
             headless: Whether to run browser in headless mode
-            action_log_path: Path to save successful action logs (organized by run timestamp)
+            action_log_path: Path to save successful action logs (organized by website and run timestamp)
         """
         self.api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
@@ -43,8 +43,9 @@ class BrowserAutomation:
         self.available_tools = []
         self.headless = headless
         self.action_log_path = Path(action_log_path)
-        # Action logs structure: {timestamp: {action_name: [tool_calls]}}
+        # Action logs structure: {website: {timestamp: {action_name: [tool_calls]}}}
         self.action_logs = self._load_action_logs()
+        self.current_website = None  # Track the current website domain
         
     async def connect_to_playwright(self):
         """
@@ -109,12 +110,12 @@ class BrowserAutomation:
         
         print("Browser closed")
     
-    def _load_action_logs(self) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    def _load_action_logs(self) -> Dict[str, Dict[str, Dict[str, List[Dict[str, Any]]]]]:
         """
         Load action logs from disk.
         
         Returns:
-            Dictionary mapping timestamps to action logs: {timestamp: {action_name: [tool_calls]}}
+            Dictionary mapping websites to timestamps to action logs: {website: {timestamp: {action_name: [tool_calls]}}}
         """
         if self.action_log_path.exists():
             try:
@@ -136,9 +137,53 @@ class BrowserAutomation:
         except Exception as e:
             print(f"Warning: Could not save action logs: {e}")
     
+    def _extract_domain(self, url: str) -> str:
+        """
+        Extract the domain from a URL and normalize it to match stored action logs.
+        
+        Args:
+            url: Full URL string
+            
+        Returns:
+            Normalized domain name (e.g., "www.bet365.com")
+        """
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain = parsed.netloc or parsed.path
+            
+            if not domain:
+                return "unknown"
+            
+            # Normalize: check if domain exists with or without www. in action logs
+            # First, check both variants
+            domain_with_www = f"www.{domain}" if not domain.startswith('www.') else domain
+            domain_without_www = domain[4:] if domain.startswith('www.') else domain
+            
+            # Check which variant exists in our logs
+            if domain_with_www in self.action_logs:
+                return domain_with_www
+            elif domain_without_www in self.action_logs:
+                return domain_without_www
+            else:
+                # If neither exists, default to the www. version for consistency
+                return domain_with_www
+        except:
+            return "unknown"
+    
+    def update_current_website(self, url: str):
+        """
+        Update the current website being automated based on URL.
+        
+        Args:
+            url: The URL being navigated to
+        """
+        self.current_website = self._extract_domain(url)
+        print(f"🌐 Current website: {self.current_website}")
+    
     def record_successful_action(self, run_timestamp: str, action_description: str, tool_calls: List[Dict[str, Any]]):
         """
-        Record a successful action with its tool calls under a specific run timestamp.
+        Record a successful action with its tool calls under the current website and run timestamp.
         
         Args:
             run_timestamp: Timestamp identifying this run
@@ -156,28 +201,69 @@ class BrowserAutomation:
                 "args": args
             })
 
-        # Ensure the run timestamp exists in action logs
-        if run_timestamp not in self.action_logs:
-            self.action_logs[run_timestamp] = {}
+        # Use current website or "unknown" if not set
+        website = self.current_website or "unknown"
         
-        # Store the action under this run's timestamp
-        self.action_logs[run_timestamp][action_description] = readable_calls
+        # Ensure the website exists in action logs
+        if website not in self.action_logs:
+            self.action_logs[website] = {}
+        
+        # Ensure the run timestamp exists under this website
+        if run_timestamp not in self.action_logs[website]:
+            self.action_logs[website][run_timestamp] = {}
+        
+        # Store the action under this website's run timestamp
+        self.action_logs[website][run_timestamp][action_description] = readable_calls
         self._save_action_logs()
-        print(f"✓ Recorded successful action: {action_description} (run: {run_timestamp})")
+        print(f"✓ Recorded successful action: {action_description} (website: {website}, run: {run_timestamp})")
     
-    def get_all_action_examples(self) -> Dict[str, List[Dict[str, Any]]]:
+    def get_all_action_examples(self, website: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Get all action examples from all runs, flattened.
+        Get all action examples from all runs, optionally filtered by website.
+        
+        Args:
+            website: Optional website domain to filter by (e.g., "example.com")
         
         Returns:
             Dictionary mapping action names to their tool calls (most recent example per action)
         """
         all_actions = {}
-        # Iterate through all runs (timestamps) and collect actions
-        for run_timestamp, actions in self.action_logs.items():
-            # Update with actions from this run (later runs overwrite earlier ones)
-            all_actions.update(actions)
+        
+        # If website specified, only look at that website's logs
+        if website:
+            if website in self.action_logs:
+                for run_timestamp, actions in self.action_logs[website].items():
+                    # Update with actions from this run (later runs overwrite earlier ones)
+                    all_actions.update(actions)
+        else:
+            # Get actions from all websites
+            for website_name, website_logs in self.action_logs.items():
+                for run_timestamp, actions in website_logs.items():
+                    # Update with actions from this run (later runs overwrite earlier ones)
+                    all_actions.update(actions)
+        
         return all_actions
+    
+    def get_websites(self) -> List[str]:
+        """
+        Get list of all websites that have logged actions.
+        
+        Returns:
+            List of website domains
+        """
+        return list(self.action_logs.keys())
+    
+    def get_website_actions(self, website: str) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+        """
+        Get all actions for a specific website, organized by timestamp.
+        
+        Args:
+            website: Website domain (e.g., "example.com")
+            
+        Returns:
+            Dictionary mapping timestamps to actions: {timestamp: {action_name: [tool_calls]}}
+        """
+        return self.action_logs.get(website, {})
     
     def _convert_tools_for_claude(self) -> List[Dict[str, Any]]:
         """
@@ -228,9 +314,17 @@ class BrowserAutomation:
         run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         print(f"🕐 Run timestamp: {run_timestamp}")
         
-        # Enhance task description with relevant action logs from all previous runs
+        # Try to extract website from task description
+        import re
+        url_pattern = r'https?://(?:www\.)?([^\s/]+)'
+        url_match = re.search(url_pattern, task_description)
+        if url_match:
+            full_url = url_match.group(0)
+            self.update_current_website(full_url)
+        
+        # Enhance task description with relevant action logs from current website or all websites
         enhanced_task = task_description
-        all_actions = self.get_all_action_examples()
+        all_actions = self.get_all_action_examples(website=self.current_website)
         if all_actions:
             # Extract keywords from task description to find relevant actions
             task_lower = task_description.lower()
@@ -366,6 +460,10 @@ class BrowserAutomation:
                     
                     # Execute the tool via MCP
                     try:
+                        # Track navigation to update current website
+                        if tool_name == "browser_navigate" and "url" in tool_args:
+                            self.update_current_website(tool_args["url"])
+                        
                         result = await self.execute_tool_call(tool_name, tool_args)
                         # Extract content from MCP response
                         if hasattr(result, 'content') and result.content:
