@@ -48,6 +48,9 @@ class PositiveEVScanner:
         # Minimum EV threshold - read from env or use default
         self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.02'))
         
+        # Minimum true probability threshold - read from env or use default (0.0 = no filter)
+        self.min_true_probability = float(os.getenv('MIN_TRUE_PROBABILITY', '0.0'))
+        
         # API regions - read from env or use default
         self.api_regions = os.getenv('API_REGIONS', 'us,uk,eu,au')
         
@@ -345,7 +348,8 @@ class PositiveEVScanner:
                         bet_odds = odds_data['odds']
                         ev = self.calculate_ev(bet_odds, true_probability)
                         
-                        if ev >= self.min_ev_threshold:
+                        # Apply both EV and probability filters
+                        if ev >= self.min_ev_threshold and true_probability >= self.min_true_probability:
                             # Get bookmaker link from API if available, otherwise generate one
                             bookmaker_url = odds_data.get('link') or self.generate_bookmaker_link(
                                 odds_data['bookmaker'],
@@ -585,6 +589,8 @@ def main():
     print(f"🎰 Betting bookmakers: {', '.join(scanner.betting_bookmakers)}")
     print(f"🏆 Sports/Leagues: {os.getenv('BETTING_SPORTS', 'soccer leagues')}")
     print(f"✅ Minimum EV threshold: {scanner.min_ev_threshold * 100}%")
+    if scanner.min_true_probability > 0:
+        print(f"🎲 Minimum true probability: {scanner.min_true_probability * 100:.1f}%")
     print(f"💰 Bankroll: £{scanner.kelly.bankroll:.2f}")
     print(f"📐 Kelly Strategy: {scanner.kelly_fraction * 100:.0f}% Kelly ({scanner.kelly_fraction:.2f} fraction)")
     
