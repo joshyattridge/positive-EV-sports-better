@@ -23,7 +23,7 @@
         "args": {
           "element": "Password textbox",
           "ref": "e1703",
-          "text": "***REDACTED***"
+          "text": "[REDACTED]"
         }
       },
       {
@@ -134,7 +134,7 @@
         "args": {
           "element": "Password textbox",
           "ref": "e1699",
-          "text": "***REDACTED***"
+          "text": "[REDACTED]"
         }
       },
       {
@@ -307,6 +307,136 @@
         "tool": "browser_navigate",
         "args": {
           "url": "https://example.com"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      }
+    ]
+  },
+  "www.paddypower.com": {
+    "20251207_215048": [
+      {
+        "tool": "browser_navigate",
+        "args": {
+          "url": "https://www.paddypower.com/football/english-premier-league/aston-villa-v-man-utd-35037807"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Login button",
+          "ref": "e46"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Allow All Cookies button",
+          "ref": "e820"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Login button",
+          "ref": "e46"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 2
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Email or Username field",
+          "ref": "e18",
+          "text": "[REDACTED]"
+        }
+      },
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Password field",
+          "ref": "e25",
+          "text": "[REDACTED]"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Login button",
+          "ref": "e31"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Close button",
+          "ref": "e367"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Aston Villa 23/20 odds button",
+          "ref": "e428"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Stake input field",
+          "ref": "e699"
+        }
+      },
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('0.56');"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place bets button",
+          "ref": "e777"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
         }
       },
       {

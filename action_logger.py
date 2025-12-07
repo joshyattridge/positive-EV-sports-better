@@ -3,13 +3,16 @@ Action Logger Module
 
 This module provides functionality to log and retrieve browser automation tool calls.
 Logs are organized by website and run timestamp to track automation history.
+Sensitive data (passwords, usernames, emails) is automatically redacted before logging.
 """
 
 import json
-from typing import Optional, Dict, Any, List
+import os
+from typing import Optional, Dict, Any, List, Set
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
+from dotenv import load_dotenv
 
 
 class ActionLogger:
@@ -38,7 +41,31 @@ class ActionLogger:
         self.action_logs = self._load_action_logs()
         self.current_website = None
         self.current_run_timestamp = None
+        self.sensitive_values = self._load_sensitive_values()
         
+    def _load_sensitive_values(self) -> Set[str]:
+        """
+        Load sensitive values from .env file that should be redacted.
+        
+        Returns:
+            Set of sensitive values to redact from logs
+        """
+        load_dotenv()
+        
+        sensitive_values = set()
+        
+        # Get all environment variables
+        env_vars = os.environ
+        
+        for key, value in env_vars.items():
+            # Check if the key contains credentials or sensitive data
+            if any(keyword in key.upper() for keyword in ['USERNAME', 'PASSWORD', 'EMAIL', 'API_KEY', 'SECRET', 'TOKEN']):
+                # Only add non-empty values that don't look like placeholders
+                if value and not value.startswith('your_') and len(value) > 3:
+                    sensitive_values.add(value)
+        
+        return sensitive_values
+    
     def _load_action_logs(self) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
         """
         Load action logs from disk.
@@ -127,11 +154,55 @@ class ActionLogger:
         self.current_website = self._extract_domain(url)
         print(f"🌐 Current website: {self.current_website}")
     
+    def _sanitize_sensitive_data(self, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Sanitize sensitive data from tool arguments before logging.
+        Uses two methods:
+        1. Checks if values match known credentials from .env file
+        2. Checks if field names indicate sensitive data (password, username, email, etc.)
+        
+        Args:
+            tool_args: Original tool arguments
+            
+        Returns:
+            Sanitized copy of tool arguments with sensitive data redacted
+        """
+        # Create a deep copy to avoid modifying the original
+        sanitized_args = tool_args.copy()
+        
+        # Keywords that indicate sensitive fields
+        sensitive_keywords = [
+            'password', 'pass', 'pwd', 'username', 'user', 'email', 
+            'login', 'credential', 'secret', 'token', 'auth'
+        ]
+        
+        # Method 1: Check if any values match known sensitive values from .env
+        for key, value in list(sanitized_args.items()):
+            if isinstance(value, str) and value in self.sensitive_values:
+                sanitized_args[key] = '[REDACTED]'
+        
+        # Method 2: Check if this is a browser_type tool call with sensitive field
+        if 'element' in sanitized_args and 'text' in sanitized_args:
+            element_desc = sanitized_args['element'].lower()
+            
+            # Check if the element description contains sensitive keywords
+            if any(keyword in element_desc for keyword in sensitive_keywords):
+                # Redact the text being typed
+                sanitized_args['text'] = '[REDACTED]'
+        
+        # Method 3: Check for any keys in the args that might be sensitive
+        for key in list(sanitized_args.keys()):
+            if any(keyword in key.lower() for keyword in sensitive_keywords):
+                sanitized_args[key] = '[REDACTED]'
+        
+        return sanitized_args
+    
     def record_tool_call(self, tool_name: str, tool_args: Dict[str, Any], 
                         run_timestamp: Optional[str] = None):
         """
         Record a tool call that was executed.
         This provides a complete audit trail of all browser actions.
+        Sensitive data (passwords, usernames, emails) is automatically redacted.
         
         Args:
             tool_name: Name of the tool that was called
@@ -155,10 +226,13 @@ class ActionLogger:
         if timestamp not in self.action_logs[website]:
             self.action_logs[website][timestamp] = []
         
-        # Record the tool call (just tool name and args)
+        # Sanitize sensitive data before recording
+        sanitized_args = self._sanitize_sensitive_data(tool_args)
+        
+        # Record the tool call (just tool name and sanitized args)
         tool_call_record = {
             "tool": tool_name,
-            "args": tool_args
+            "args": sanitized_args
         }
         
         self.action_logs[website][timestamp].append(tool_call_record)
