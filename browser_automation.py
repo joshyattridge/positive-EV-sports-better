@@ -244,27 +244,6 @@ class BrowserAutomation:
         
         return all_actions
     
-    def get_websites(self) -> List[str]:
-        """
-        Get list of all websites that have logged actions.
-        
-        Returns:
-            List of website domains
-        """
-        return list(self.action_logs.keys())
-    
-    def get_website_actions(self, website: str) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
-        """
-        Get all actions for a specific website, organized by timestamp.
-        
-        Args:
-            website: Website domain (e.g., "example.com")
-            
-        Returns:
-            Dictionary mapping timestamps to actions: {timestamp: {action_name: [tool_calls]}}
-        """
-        return self.action_logs.get(website, {})
-    
     def _convert_tools_for_claude(self) -> List[Dict[str, Any]]:
         """
         Convert MCP tools to Claude tool format.
