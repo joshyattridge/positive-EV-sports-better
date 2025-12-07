@@ -63,6 +63,13 @@ class PositiveEVScanner:
         # Initialize Kelly Criterion calculator
         self.kelly = KellyCriterion()
         
+        # Sorting configuration - read from env or use defaults
+        self.order_by = os.getenv('ORDER_BY', 'expected_profit').lower()
+        self.sort_order = os.getenv('SORT_ORDER', 'desc').lower()
+        
+        # Filtering configuration - read from env or use defaults
+        self.one_bet_per_game = os.getenv('ONE_BET_PER_GAME', 'false').lower() == 'true'
+        
     def get_available_sports(self) -> List[Dict]:
         """
         Get list of available sports.
@@ -424,6 +431,58 @@ class PositiveEVScanner:
         
         return all_opportunities
     
+    def sort_opportunities(self, opportunities: List[Dict]) -> List[Dict]:
+        """
+        Sort opportunities based on configured sort criteria.
+        
+        Args:
+            opportunities: List of opportunities to sort
+            
+        Returns:
+            Sorted list of opportunities
+        """
+        # Determine sort key based on ORDER_BY setting
+        sort_key_map = {
+            'ev': lambda x: x['ev_percentage'],
+            'kelly': lambda x: x['kelly_stake']['kelly_percentage'],
+            'expected_profit': lambda x: x['expected_profit'],
+            'odds': lambda x: x['odds'],
+            'match_time': lambda x: x['commence_time']
+        }
+        
+        # Get the sort key function, default to expected_profit
+        sort_key = sort_key_map.get(self.order_by, sort_key_map['expected_profit'])
+        
+        # Determine reverse flag (desc = True, asc = False)
+        reverse = (self.sort_order == 'desc')
+        
+        # Sort and return
+        return sorted(opportunities, key=sort_key, reverse=reverse)
+    
+    def filter_one_bet_per_game(self, opportunities: List[Dict]) -> List[Dict]:
+        """
+        Filter opportunities to show only the best bet per game.
+        
+        Args:
+            opportunities: List of opportunities (should already be sorted)
+            
+        Returns:
+            Filtered list with only one opportunity per game
+        """
+        if not self.one_bet_per_game:
+            return opportunities
+        
+        seen_games = set()
+        filtered = []
+        
+        for opp in opportunities:
+            game_key = opp['game']
+            if game_key not in seen_games:
+                seen_games.add(game_key)
+                filtered.append(opp)
+        
+        return filtered
+    
     def print_opportunities(self, opportunities: Dict[str, List[Dict]]):
         """
         Print all positive EV opportunities in a readable format.
@@ -441,13 +500,39 @@ class PositiveEVScanner:
             print("No +EV opportunities found at this time.")
             return
         
+        # Display sort settings
+        sort_labels = {
+            'ev': 'Expected Value %',
+            'kelly': 'Kelly %',
+            'expected_profit': 'Expected Profit',
+            'odds': 'Odds',
+            'match_time': 'Match Time'
+        }
+        sort_label = sort_labels.get(self.order_by, 'Expected Profit')
+        order_label = 'Highest first' if self.sort_order == 'desc' else 'Lowest first'
+        print(f"🔢 Sorted by: {sort_label} ({order_label})")
+        
+        if self.one_bet_per_game:
+            print(f"🎯 Filter: ONE BET PER GAME (showing best opportunity per match)")
+        else:
+            print(f"🎯 Filter: ALL BETS (showing all opportunities including duplicates)")
+        print()
+        
         for sport, opps in opportunities.items():
-            print(f"\n{'─'*80}")
-            print(f"📊 {sport.upper().replace('_', ' ')}: {len(opps)} opportunities")
-            print(f"{'─'*80}\n")
+            # Sort opportunities using configured method
+            opps = self.sort_opportunities(opps)
             
-            # Sort by EV percentage (highest first)
-            opps.sort(key=lambda x: x['ev_percentage'], reverse=True)
+            # Apply one-bet-per-game filter if enabled
+            original_count = len(opps)
+            opps = self.filter_one_bet_per_game(opps)
+            filtered_count = len(opps)
+            
+            print(f"\n{'─'*80}")
+            if self.one_bet_per_game and original_count != filtered_count:
+                print(f"📊 {sport.upper().replace('_', ' ')}: {filtered_count} opportunities (filtered from {original_count})")
+            else:
+                print(f"📊 {sport.upper().replace('_', ' ')}: {filtered_count} opportunities")
+            print(f"{'─'*80}\n")
             
             for i, opp in enumerate(opps, 1):
                 # Convert odds to fractional
