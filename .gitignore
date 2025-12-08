@@ -9,6 +9,10 @@ action_logs.json
 # Browser states (contains sensitive auth cookies and session data)
 browser_states/
 
+# backtest cache
+backtest_cache/
+backtest_results.json
+
 # Python
 __pycache__/
 *.py[cod]
