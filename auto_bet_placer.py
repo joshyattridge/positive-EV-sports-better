@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from positive_ev_scanner import PositiveEVScanner
 from browser_automation import BrowserAutomation
 from kelly_criterion import KellyCriterion
+from bet_logger import BetLogger
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +36,7 @@ class AutoBetPlacer:
         self.scanner = PositiveEVScanner()
         self.automation = BrowserAutomation(headless=headless)
         self.kelly = KellyCriterion()
+        self.bet_logger = BetLogger()
         
     def get_bookmaker_credentials(self, bookmaker_key: str) -> Dict[str, str]:
         """
@@ -294,6 +296,8 @@ ACTION_SUCCESS: place_bet_for_{opportunity['bookmaker_key']}
         
         if dry_run:
             print("\n🔍 DRY RUN MODE - Not placing bet")
+            # Log the bet as 'not_placed' in dry run mode
+            self.bet_logger.log_bet(best_opp, bet_placed=False, notes="Dry run - bet not placed")
             return {
                 'success': True,
                 'message': 'Dry run completed',
@@ -309,6 +313,12 @@ ACTION_SUCCESS: place_bet_for_{opportunity['bookmaker_key']}
         try:
             result = await self.automation.automate_task(prompt, max_iterations=50)
             
+            # Log the bet to CSV
+            if result['success']:
+                self.bet_logger.log_bet(best_opp, bet_placed=True, notes="Bet placed successfully via automation")
+            else:
+                self.bet_logger.log_bet(best_opp, bet_placed=False, notes=f"Bet placement failed: {result['response']}")
+            
             return {
                 'success': result['success'],
                 'message': result['response'],
@@ -317,6 +327,9 @@ ACTION_SUCCESS: place_bet_for_{opportunity['bookmaker_key']}
             }
             
         except Exception as e:
+            # Log the bet as failed
+            self.bet_logger.log_bet(best_opp, bet_placed=False, notes=f"Automation error: {str(e)}")
+            
             return {
                 'success': False,
                 'message': f'Automation error: {str(e)}',
@@ -394,6 +407,10 @@ async def main():
         traceback.print_exc()
     finally:
         await placer.close()
+        
+        # Print bet history summary
+        placer.bet_logger.print_summary()
+        
         print("\n" + "="*80)
         print(f"⏰ Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*80)

@@ -1,6 +1,11 @@
 # Environment variables
 .env
 
+# Bet history and logs
+bet_history.csv
+bet_analysis_export.csv
+action_logs.json
+
 # Python
 __pycache__/
 *.py[cod]
