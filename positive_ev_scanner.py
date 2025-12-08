@@ -43,7 +43,7 @@ class PositiveEVScanner:
         self.sharp_books = [book.strip() for book in sharp_books_str.split(',')]
         
         # Betting bookmakers - read from env or use defaults
-        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', 'bet365,williamhill,ladbrokes_uk,coral,paddypower,skybet,betway,betvictor,unibet_uk,betfred,888sport')
+        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', 'bet365,williamhill,ladbrokes_uk,coral,paddypower,skybet,betway,betvictor,unibet_uk,betfred,sport888')
         self.betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
         
         # Minimum EV threshold - read from env or use default
@@ -210,7 +210,7 @@ class PositiveEVScanner:
             'betvictor': f'https://www.betvictor.com/en-gb/sports/football?q={encoded_query}',
             'unibet_uk': f'https://www.unibet.co.uk/betting/sports/filter/all/all/all?search={encoded_query}',
             'betfred': f'https://www.betfred.com/sport/football?q={encoded_query}',
-            '888sport': f'https://www.888sport.com/football?q={encoded_query}'
+            'sport888': f'https://www.888sport.com/football?q={encoded_query}'
         }
         
         # If bookmaker has a search URL, use it, otherwise create a Google search
@@ -228,7 +228,7 @@ class PositiveEVScanner:
                 'betvictor': 'betvictor.com',
                 'unibet_uk': 'unibet.co.uk',
                 'betfred': 'betfred.com',
-                '888sport': '888sport.com'
+                'sport888': '888sport.com'
             }
             domain = site_domains.get(bookmaker_key, bookmaker_key)
             return f'https://www.google.com/search?q={encoded_query}+site:{domain}'

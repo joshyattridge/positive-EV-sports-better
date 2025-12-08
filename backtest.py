@@ -49,7 +49,7 @@ class HistoricalBacktester:
         sharp_books_str = os.getenv('SHARP_BOOKS', 'pinnacle')
         self.sharp_books = [book.strip() for book in sharp_books_str.split(',')]
         
-        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', 'bet365,williamhill,paddypower,888sport')
+        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', 'bet365,williamhill,paddypower,sport888')
         self.betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
         
         # One bet per game filter
