@@ -6,12 +6,13 @@ by comparing odds across multiple sportsbooks against sharp bookmakers.
 """
 
 import requests
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 from datetime import datetime
 import time
 import os
 from dotenv import load_dotenv
 from kelly_criterion import KellyCriterion
+from bet_logger import BetLogger
 
 # Load environment variables from .env file
 load_dotenv()
@@ -66,12 +67,16 @@ class PositiveEVScanner:
         # Initialize Kelly Criterion calculator
         self.kelly = KellyCriterion()
         
+        # Initialize bet logger
+        self.bet_logger = BetLogger()
+        
         # Sorting configuration - read from env or use defaults
         self.order_by = os.getenv('ORDER_BY', 'expected_profit').lower()
         self.sort_order = os.getenv('SORT_ORDER', 'desc').lower()
         
         # Filtering configuration - read from env or use defaults
         self.one_bet_per_game = os.getenv('ONE_BET_PER_GAME', 'false').lower() == 'true'
+        self.skip_already_bet_games = os.getenv('SKIP_ALREADY_BET_GAMES', 'true').lower() == 'true'
         
     def get_available_sports(self) -> List[Dict]:
         """
@@ -275,7 +280,20 @@ class PositiveEVScanner:
             print("No games found or API error.")
             return opportunities
         
+        # Get already-bet game IDs if filtering is enabled
+        already_bet_game_ids: Set[str] = set()
+        if self.skip_already_bet_games:
+            already_bet_game_ids = self.bet_logger.get_already_bet_game_ids()
+            if already_bet_game_ids:
+                print(f"🚫 Filtering out {len(already_bet_game_ids)} games with existing bets")
+        
         for game in games:
+            # Get game ID from API
+            game_id = game.get('id', '')
+            
+            # Skip games that already have bets if filtering is enabled
+            if self.skip_already_bet_games and game_id and game_id in already_bet_game_ids:
+                continue
             # Skip live games
             commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
             if commence_time <= datetime.now(commence_time.tzinfo):
@@ -388,6 +406,7 @@ class PositiveEVScanner:
                                         })
                             
                             opportunities.append({
+                                'game_id': game_id,
                                 'sport': sport,
                                 'game': f"{away_team} @ {home_team}",
                                 'commence_time': commence_time_str,

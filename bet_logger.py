@@ -33,6 +33,7 @@ class BetLogger:
     CSV_HEADERS = [
         'timestamp',
         'date_placed',
+        'game_id',
         'sport',
         'game',
         'commence_time',
@@ -102,6 +103,7 @@ class BetLogger:
             bet_record = {
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'date_placed': datetime.now().strftime('%Y-%m-%d'),
+                'game_id': opportunity.get('game_id', ''),
                 'sport': opportunity.get('sport', ''),
                 'game': opportunity.get('game', ''),
                 'commence_time': opportunity.get('commence_time', ''),
@@ -190,6 +192,32 @@ class BetLogger:
         except Exception as e:
             print(f"❌ Error updating bet result: {e}")
             return False
+    
+    def get_already_bet_game_ids(self) -> set:
+        """
+        Get a set of game IDs that already have bets placed on them.
+        
+        Returns:
+            Set of game IDs (strings) that have bets in the history
+        """
+        game_ids = set()
+        
+        try:
+            if not self.log_path.exists():
+                return game_ids
+            
+            with open(self.log_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    game_id = row.get('game_id', '').strip()
+                    # Only add if game_id exists and bet was actually placed (not 'not_placed')
+                    if game_id and row.get('bet_result') != 'not_placed':
+                        game_ids.add(game_id)
+            
+        except Exception as e:
+            print(f"⚠️  Error reading bet history for game IDs: {e}")
+        
+        return game_ids
     
     def get_bet_summary(self) -> Dict[str, Any]:
         """
