@@ -384,14 +384,104 @@
         "tool": "browser_snapshot",
         "args": {}
       }
-    ]
-  },
-  "www.example.com": {
-    "20251207_213540": [
+    ],
+    "20251208_112453": [
       {
         "tool": "browser_navigate",
         "args": {
-          "url": "https://example.com"
+          "url": "https://sports.williamhill.com/betting/en-gb/football/OB_EV37960948/real-madrid-vs-sevilla"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Accept all cookies button",
+          "ref": "e99"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Login button",
+          "ref": "e46"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Username input field",
+          "ref": "e1089"
+        }
+      },
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Username input field",
+          "ref": "e1089",
+          "text": "[REDACTED]"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Password input field",
+          "ref": "e1096"
+        }
+      },
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Password input field",
+          "ref": "e1096",
+          "text": "[REDACTED]"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Log In button",
+          "ref": "e1111"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Real Madrid at 1/4 button",
+          "ref": "e389"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Stake input field",
+          "ref": "e1328"
+        }
+      },
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('1.32');"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e1335"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
         }
       },
       {
