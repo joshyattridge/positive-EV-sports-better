@@ -6,6 +6,9 @@ bet_history.csv
 bet_analysis_export.csv
 action_logs.json
 
+# Browser states (contains sensitive auth cookies and session data)
+browser_states/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -26,7 +26,8 @@ class BrowserAutomation:
     """
     
     def __init__(self, anthropic_api_key: Optional[str] = None, headless: bool = False, 
-                 action_log_path: str = "action_logs.json"):
+                 action_log_path: str = "action_logs.json",
+                 state_dir: str = "browser_states"):
         """
         Initialize the browser automation client.
         
@@ -34,6 +35,7 @@ class BrowserAutomation:
             anthropic_api_key: Anthropic API key. If not provided, will use ANTHROPIC_API_KEY env var.
             headless: Whether to run browser in headless mode
             action_log_path: Path to save successful action logs (organized by website and run timestamp)
+            state_dir: Directory to store browser state files (cookies, storage, etc.)
         """
         self.api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
@@ -45,14 +47,51 @@ class BrowserAutomation:
         self.headless = headless
         self.action_logger = ActionLogger(log_path=action_log_path)
         
+        # State persistence setup
+        self.state_dir = Path(state_dir)
+        self.state_dir.mkdir(exist_ok=True)
+        self.current_state_file = None
+        self.use_persistent_profile = True  # Use --user-data-dir for full persistence
+        
+    def _get_state_file(self, website: Optional[str] = None) -> Path:
+        """
+        Get the state file path for a website.
+        
+        Args:
+            website: Website domain (e.g., 'www.bet365.com'). If None, uses current website.
+        
+        Returns:
+            Path to the state file
+        """
+        if website is None:
+            website = self.action_logger.current_website or "default"
+        # Clean website name for filename
+        clean_name = website.replace("https://", "").replace("http://", "").replace("/", "_")
+        return self.state_dir / f"{clean_name}_state.json"
+    
     async def connect_to_playwright(self):
         """
         Connect to the Microsoft Playwright MCP server.
+        
+        Uses --user-data-dir for persistent browser profiles, which captures:
+        - All cookies (including HttpOnly)
+        - localStorage, sessionStorage
+        - Browser cache, history
+        - Extensions, settings
         """
         # Configure the Playwright MCP server connection
         args = ["@playwright/mcp@latest"]
         if self.headless:
             args.append("--headless")
+        
+        # Use user-data-dir for persistent browser profile
+        # This captures EVERYTHING including HttpOnly cookies
+        if self.use_persistent_profile and self.current_state_file:
+            # Use the state file path's stem as the profile directory name
+            profile_dir = self.state_dir / f"{self.current_state_file.stem}_profile"
+            profile_dir.mkdir(exist_ok=True)
+            args.extend(["--user-data-dir", str(profile_dir)])
+            print(f"🔐 Using persistent browser profile: {profile_dir}")
         
         server_params = StdioServerParameters(
             command="npx",
@@ -82,10 +121,168 @@ class BrowserAutomation:
         
         return self.session
         
-    async def close_browser(self):
+    async def save_browser_state(self, website: Optional[str] = None) -> Optional[Path]:
+        """
+        Save the current browser state (cookies, storage, etc.).
+        
+        Note: When use_persistent_profile=True (default), browser state is automatically
+        saved to disk by Playwright via --user-data-dir. This method still saves a JSON
+        snapshot for reference/debugging.
+        
+        Args:
+            website: Website domain to associate state with. If None, uses current website.
+        
+        Returns:
+            Path to the saved state file, or None if save failed
+        """
+        if not self.session:
+            print("⚠️ Cannot save state: not connected to browser")
+            return None
+        
+        state_file = self._get_state_file(website)
+        
+        try:
+            # Get cookies and storage via JavaScript evaluation
+            result = await self.session.call_tool("browser_evaluate", {
+                "function": """async () => {
+                    // Get all cookies
+                    const cookies = document.cookie.split(';').map(c => c.trim());
+                    
+                    // Get localStorage
+                    const localStorageData = {};
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        localStorageData[key] = localStorage.getItem(key);
+                    }
+                    
+                    // Get sessionStorage  
+                    const sessionStorageData = {};
+                    for (let i = 0; i < sessionStorage.length; i++) {
+                        const key = sessionStorage.key(i);
+                        sessionStorageData[key] = sessionStorage.getItem(key);
+                    }
+                    
+                    return JSON.stringify({
+                        cookies: cookies,
+                        localStorage: localStorageData,
+                        sessionStorage: sessionStorageData,
+                        url: window.location.href,
+                        timestamp: new Date().toISOString()
+                    });
+                }"""
+            })
+            
+            # Extract the result from MCP response
+            if hasattr(result, 'content') and result.content:
+                # Parse the text content from the result
+                content_item = result.content[0]
+                if hasattr(content_item, 'text'):
+                    text_content = content_item.text
+                    
+                    # The result comes as: ### Result\n"<json_string>"\n\n### Ran Playwright code...
+                    # We need to extract the JSON string between quotes after "### Result"
+                    lines = text_content.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        # Skip header lines
+                        if line.startswith('#') or not line:
+                            continue
+                        # Found the result line - it's a JSON string wrapped in quotes
+                        if line.startswith('"') and line.endswith('"'):
+                            # Remove outer quotes and unescape
+                            state_data = json.loads(line)  # This parses the quoted JSON string
+                            # state_data is now the actual JSON string, write it
+                            state_file.write_text(state_data)
+                            print(f"💾 Browser state saved to: {state_file}")
+                            return state_file
+                        elif line.startswith('{') or line.startswith('['):
+                            # Direct JSON (shouldn't happen with our code but handle it)
+                            json.loads(line)  # Validate
+                            state_file.write_text(line)
+                            print(f"💾 Browser state saved to: {state_file}")
+                            return state_file
+            
+            print("⚠️ No state data returned from browser")
+            return None
+            
+        except Exception as e:
+            print(f"⚠️ Failed to save browser state: {e}")
+            return None
+    
+    async def load_browser_state(self, website: Optional[str] = None) -> bool:
+        """
+        Load browser state (cookies, storage) from a saved file.
+        
+        Args:
+            website: Website domain to load state for. If None, uses current website.
+        
+        Returns:
+            True if state was loaded successfully, False otherwise
+        """
+        if not self.session:
+            print("⚠️ Cannot load state: not connected to browser")
+            return False
+        
+        state_file = self._get_state_file(website)
+        
+        if not state_file.exists():
+            print(f"ℹ️ No saved state found for {website or 'current site'}")
+            return False
+        
+        try:
+            state_data = json.loads(state_file.read_text())
+            
+            # Restore cookies and storage via JavaScript
+            restore_code = f"""
+                async () => {{
+                    const state = {json.dumps(state_data)};
+                    
+                    // Restore cookies
+                    if (state.cookies && Array.isArray(state.cookies)) {{
+                        state.cookies.forEach(cookie => {{
+                            if (cookie) document.cookie = cookie;
+                        }});
+                    }}
+                    
+                    // Restore localStorage
+                    if (state.localStorage) {{
+                        Object.keys(state.localStorage).forEach(key => {{
+                            localStorage.setItem(key, state.localStorage[key]);
+                        }});
+                    }}
+                    
+                    // Restore sessionStorage
+                    if (state.sessionStorage) {{
+                        Object.keys(state.sessionStorage).forEach(key => {{
+                            sessionStorage.setItem(key, state.sessionStorage[key]);
+                        }});
+                    }}
+                    
+                    return 'State restored successfully';
+                }}
+            """
+            
+            result = await self.session.call_tool("browser_evaluate", {
+                "function": restore_code
+            })
+            
+            print(f"✅ Browser state loaded from: {state_file}")
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ Failed to load browser state: {e}")
+            return False
+    
+    async def close_browser(self, save_state: bool = True):
         """
         Close the browser and cleanup.
+        
+        Args:
+            save_state: Whether to save browser state before closing
         """
+        if self.session and save_state:
+            await self.save_browser_state()
+        
         if self.session:
             try:
                 # Try to close the browser via MCP
@@ -150,15 +347,27 @@ class BrowserAutomation:
         Returns:
             Dictionary containing the task results and conversation history
         """
-        if not self.session:
-            await self.connect_to_playwright()
-        
-        # Start a new run and extract website from task description
+        # Extract website from task description
         url_pattern = r'https?://(?:www\.)?([^\s/]+)'
         url_match = re.search(url_pattern, task_description)
         url = url_match.group(0) if url_match else None
         
+        # Extract domain for state file
+        target_domain = None
+        if url:
+            parsed_url = url_match.group(0) if url_match else None
+            if parsed_url:
+                target_domain = parsed_url.split('/')[2] if '/' in parsed_url else parsed_url.replace('https://', '').replace('http://', '')
+                self.current_state_file = self._get_state_file(target_domain)
+        
+        if not self.session:
+            await self.connect_to_playwright()
+        
         run_timestamp = self.action_logger.start_new_run(url)
+        
+        # If we have a saved state for this domain, mention it in the task
+        if target_domain and self._get_state_file(target_domain).exists():
+            print(f"💡 Saved state available for {target_domain} - will attempt to restore after navigation")
         
         # Enhance task description with tool calls from previous runs on this website
         enhanced_task = task_description
