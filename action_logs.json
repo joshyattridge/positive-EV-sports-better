@@ -299,6 +299,91 @@
           "ref": "e1406"
         }
       }
+    ],
+    "20251208_081454": [
+      {
+        "tool": "browser_navigate",
+        "args": {
+          "url": "https://sports.williamhill.com/betting/en-gb/football/OB_EV37949985/man-city-vs-west-ham"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Account login button",
+          "ref": "e57"
+        }
+      },
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.getByRole('button', { name: 'account nli icon' }).first().click({force: true});"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Close button for account menu",
+          "ref": "e1266"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Man City at 2/9 button",
+          "ref": "e381"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Stake input field",
+          "ref": "e1393"
+        }
+      },
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('1.15');"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e1400"
+        }
+      },
+      {
+        "tool": "browser_wait_for",
+        "args": {
+          "time": 3
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      }
     ]
   },
   "www.example.com": {
