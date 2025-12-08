@@ -64,6 +64,17 @@ class HistoricalBacktester:
         self.current_bankroll = self.initial_bankroll
         self.games_bet_on = set()  # Track which games we've already bet on
         
+        # Monte Carlo tracking
+        self.all_simulations = []  # Store all simulation runs
+        
+    def reset_state(self):
+        """Reset backtester state for new Monte Carlo run."""
+        self.bets_placed = []
+        self.bankroll_history = [self.initial_bankroll]
+        self.bankroll_timestamps = []
+        self.current_bankroll = self.initial_bankroll
+        self.games_bet_on = set()
+        
     def _get_cache_key(self, sport: str, date: str, markets: str) -> str:
         """Generate a cache key for the API request."""
         key_str = f"{sport}_{date}_{markets}"
@@ -90,7 +101,7 @@ class HistoricalBacktester:
         except Exception as e:
             print(f"  Warning: Failed to save cache: {e}")
         
-    def get_historical_odds(self, sport: str, date: str, markets: str = 'h2h') -> Optional[Dict]:
+    def get_historical_odds(self, sport: str, date: str, markets: str = 'h2h') -> Optional[tuple]:
         """
         Get historical odds for a specific date (with caching).
         
@@ -100,7 +111,7 @@ class HistoricalBacktester:
             markets: Markets to query
             
         Returns:
-            Historical odds data or None if error
+            Tuple of (data, was_cached) or (None, False) if error
         """
         # Check cache first
         cache_key = self._get_cache_key(sport, date, markets)
@@ -108,7 +119,7 @@ class HistoricalBacktester:
         
         if cached_data:
             print(f"  💾 Loaded from cache")
-            return cached_data
+            return (cached_data, True)
         
         # Fetch from API
         url = f"{self.base_url}/historical/sports/{sport}/odds"
@@ -134,10 +145,10 @@ class HistoricalBacktester:
             # Save to cache
             self._save_to_cache(cache_key, data)
             
-            return data
+            return (data, False)
         except requests.exceptions.RequestException as e:
             print(f"  Error fetching historical odds: {e}")
-            return None
+            return (None, False)
     
     def get_historical_scores(self, sport: str, date_from: str, date_to: str) -> Optional[List[Dict]]:
         """
@@ -306,62 +317,59 @@ class HistoricalBacktester:
         
         return opportunities
     
-    def determine_bet_result(self, bet: Dict, scores_data: List[Dict]) -> Optional[str]:
+    def determine_bet_result(self, bet: Dict, scores_data: Dict) -> Optional[str]:
         """
         Determine if a bet won or lost based on actual game results.
         
         Args:
             bet: Bet details
-            scores_data: Historical scores data
+            scores_data: Pre-indexed scores data by game matchup
             
         Returns:
             'won', 'lost', or None if result unknown
         """
-        # Find the game in scores data by matching teams and date
+        # Look up game in pre-indexed scores data
         bet_game = f"{bet.get('game', '')}"
+        game = scores_data.get(bet_game)
         
-        for game in scores_data:
-            game_matchup = f"{game.get('away_team', '')} @ {game.get('home_team', '')}"
-            
-            # Match by team names
-            if bet_game == game_matchup:
-                # Check if game is completed
-                if not game.get('completed', False):
-                    return None
-                
-                scores = game.get('scores')
-                if not scores or len(scores) < 2:
-                    return None
-                
-                # Parse scores
-                home_score = None
-                away_score = None
-                
-                for score in scores:
-                    if score['name'] == game['home_team']:
-                        home_score = int(score['score'])
-                    elif score['name'] == game['away_team']:
-                        away_score = int(score['score'])
-                
-                if home_score is None or away_score is None:
-                    return None
-                
-                # Determine winner based on market type
-                if bet['market'] == 'h2h':
-                    outcome = bet['outcome']
-                    
-                    if outcome == game['home_team'] and home_score > away_score:
-                        return 'won'
-                    elif outcome == game['away_team'] and away_score > home_score:
-                        return 'won'
-                    elif 'Draw' in outcome and home_score == away_score:
-                        return 'won'
-                    else:
-                        return 'lost'
-                
-                # For spreads and totals, would need more complex logic
-                # For now, return None for these markets
+        if game:
+            # Check if game is completed
+            if not game.get('completed', False):
                 return None
+            
+            scores = game.get('scores')
+            if not scores or len(scores) < 2:
+                return None
+            
+            # Parse scores
+            home_score = None
+            away_score = None
+            
+            for score in scores:
+                if score['name'] == game['home_team']:
+                    home_score = int(score['score'])
+                elif score['name'] == game['away_team']:
+                    away_score = int(score['score'])
+            
+            if home_score is None or away_score is None:
+                return None
+            
+            # Determine winner based on market type
+            if bet['market'] == 'h2h':
+                outcome = bet['outcome']
+                
+                if outcome == game['home_team'] and home_score > away_score:
+                    return 'won'
+                elif outcome == game['away_team'] and away_score > home_score:
+                    return 'won'
+                elif 'Draw' in outcome and home_score == away_score:
+                    return 'won'
+                else:
+                    return 'lost'
+            
+            # For spreads and totals, would need more complex logic
+            # For now, return None for these markets
+            return None
         
         return None
     
@@ -437,13 +445,17 @@ class HistoricalBacktester:
         # Get scores for the entire period (for result determination)
         print("Fetching historical scores for result verification...")
         end_plus_buffer = (end + timedelta(days=7)).isoformat()
-        scores_data = self.get_historical_scores(sport, start_date, end_plus_buffer)
+        scores_list = self.get_historical_scores(sport, start_date, end_plus_buffer)
         
-        if not scores_data:
-            print("⚠️  Warning: Could not fetch scores. Results will be simulated.")
-            scores_data = []
+        # Pre-index scores by game matchup for O(1) lookup
+        scores_data = {}
+        if scores_list:
+            for game in scores_list:
+                matchup = f"{game.get('away_team', '')} @ {game.get('home_team', '')}"
+                scores_data[matchup] = game
+            print(f"✅ Loaded {len(scores_data)} completed games (indexed)\n")
         else:
-            print(f"✅ Loaded {len(scores_data)} completed games\n")
+            print("⚠️  Warning: Could not fetch scores. Results will be simulated.\n")
         
         print("Scanning historical odds snapshots...\n")
         
@@ -454,7 +466,8 @@ class HistoricalBacktester:
             print(f"[{snapshot_count}] Snapshot: {timestamp}")
             
             # Get historical odds
-            historical_data = self.get_historical_odds(sport, timestamp)
+            result = self.get_historical_odds(sport, timestamp)
+            historical_data, was_cached = result if result else (None, False)
             
             if historical_data:
                 # Find +EV opportunities
@@ -469,26 +482,32 @@ class HistoricalBacktester:
                             self.games_bet_on.add(opp['game_id'])
                     
                     if new_opportunities:
-                        print(f"  Found {len(new_opportunities)} +EV opportunities ({len(opportunities) - len(new_opportunities)} filtered - already bet)")
+                        filtered_count = len(opportunities) - len(new_opportunities)
+                        print(f"  Found {len(new_opportunities)} +EV opportunities ({filtered_count} filtered - already bet)")
                         total_opportunities += len(new_opportunities)
                         
-                        # Place bets
+                        # Batch process all bets for this snapshot
+                        import random
+                        won_count = 0
+                        lost_count = 0
+                        
                         for opp in new_opportunities:
                             # Determine result if available
                             result = self.determine_bet_result(opp, scores_data)
-                            result_source = "API" if result is not None else "SIM"
                             
                             # If no result, simulate based on true probability
                             if result is None:
-                                import random
                                 result = 'won' if random.random() < opp['true_probability'] else 'lost'
                             
-                            self.place_bet(opp, result, bet_timestamp=timestamp)
+                            if result == 'won':
+                                won_count += 1
+                            else:
+                                lost_count += 1
                             
-                            result_emoji = "✅" if result == 'won' else "❌"
-                            print(f"    {result_emoji} {opp['game']} | {opp['outcome']} @ {opp['odds']:.2f} | "
-                                  f"EV: {opp['ev']*100:.2f}% | Stake: £{opp['stake']:.2f} | "
-                                  f"Result: {result} ({result_source}) | Bankroll: £{self.current_bankroll:.2f}")
+                            self.place_bet(opp, result, bet_timestamp=timestamp)
+                        
+                        # Print batch summary
+                        print(f"    Placed {len(new_opportunities)} bets: {won_count}W-{lost_count}L | Bankroll: £{self.current_bankroll:.2f}")
                     else:
                         print(f"  No +EV opportunities found (all filtered - already bet)")
                 else:
@@ -496,8 +515,9 @@ class HistoricalBacktester:
             else:
                 print(f"  Failed to fetch data")
             
-            # Rate limiting - wait between requests
-            time.sleep(0.5)
+            # Smart rate limiting - only wait if we actually made an API call
+            if historical_data and not was_cached:
+                time.sleep(0.5)
             
             # Move to next snapshot
             current += timedelta(hours=snapshot_interval_hours)
@@ -598,15 +618,22 @@ class HistoricalBacktester:
             'bets': self.bets_placed
         }
     
-    def plot_results(self, save_path: str = 'backtest_chart.png'):
+    def plot_results(self, save_path: str = 'backtest_chart.png', show_monte_carlo: bool = False):
         """
         Create a graph showing bankroll progression over time.
         
         Args:
             save_path: Path to save the chart image
+            show_monte_carlo: If True, plot all Monte Carlo simulations
         """
         try:
             print(f"\n📊 Generating bankroll chart...")
+            
+            if show_monte_carlo and self.all_simulations:
+                print(f"   Plotting {len(self.all_simulations)} Monte Carlo simulations...")
+                self._plot_monte_carlo(save_path)
+                return
+            
             print(f"   Timestamps: {len(self.bankroll_timestamps)}")
             print(f"   Bankroll history: {len(self.bankroll_history)}")
             
@@ -702,12 +729,224 @@ class HistoricalBacktester:
             import traceback
             traceback.print_exc()
     
+    def _plot_monte_carlo(self, save_path: str):
+        """Plot all Monte Carlo simulations together."""
+        import numpy as np
+        
+        # Create figure
+        plt.figure(figsize=(16, 10))
+        
+        all_final_bankrolls = []
+        
+        # Plot each simulation
+        for i, sim in enumerate(self.all_simulations):
+            dates = [datetime.fromisoformat(ts.replace('Z', '+00:00')) for ts in sim['timestamps']]
+            
+            # Sort by timestamp
+            sorted_data = sorted(zip(dates, sim['history'][1:]), key=lambda x: x[0])
+            dates = [d for d, _ in sorted_data]
+            bankroll_values = [b for _, b in sorted_data]
+            
+            # Aggregate by date
+            from collections import OrderedDict
+            daily_data = OrderedDict()
+            for date, bankroll in zip(dates, bankroll_values):
+                date_key = date.date()
+                daily_data[date_key] = bankroll
+            
+            plot_dates = [datetime.combine(d, datetime.min.time()) for d in daily_data.keys()]
+            plot_bankroll = list(daily_data.values())
+            
+            # Apply smoothing
+            if len(plot_bankroll) > 3:
+                window = min(3, len(plot_bankroll) // 5)
+                if window > 1:
+                    smoothed = np.convolve(plot_bankroll, np.ones(window)/window, mode='valid')
+                    offset = window // 2
+                    smoothed_dates = plot_dates[offset:offset+len(smoothed)]
+                    plot_dates = smoothed_dates
+                    plot_bankroll = smoothed.tolist()
+            
+            # Plot with transparency
+            alpha = 0.3 if len(self.all_simulations) > 10 else 0.5
+            plt.plot(plot_dates, plot_bankroll, linewidth=1.5, alpha=alpha, color='#2E86AB')
+            
+            all_final_bankrolls.append(sim['history'][-1])
+        
+        # Calculate statistics
+        avg_final = np.mean(all_final_bankrolls)
+        median_final = np.median(all_final_bankrolls)
+        percentile_5 = np.percentile(all_final_bankrolls, 5)
+        percentile_95 = np.percentile(all_final_bankrolls, 95)
+        
+        avg_return = ((avg_final - self.initial_bankroll) / self.initial_bankroll) * 100
+        
+        # Add horizontal lines
+        plt.axhline(y=self.initial_bankroll, color='gray', linestyle='--', 
+                    linewidth=2, alpha=0.7, label='Initial Bankroll')
+        plt.axhline(y=avg_final, color='red', linestyle='-', 
+                    linewidth=2, alpha=0.8, label=f'Average Final: £{avg_final:.2f}')
+        
+        # Title with statistics
+        plt.title(f'Monte Carlo Backtest Results ({len(self.all_simulations)} Simulations)\n'
+                  f'Avg Return: {avg_return:+.2f}% | Median: £{median_final:.2f} | '
+                  f'5th-95th Percentile: £{percentile_5:.2f} - £{percentile_95:.2f}',
+                  fontsize=14, fontweight='bold', pad=20)
+        
+        plt.xlabel('Date', fontsize=12, fontweight='bold')
+        plt.ylabel('Bankroll (£)', fontsize=12, fontweight='bold')
+        plt.grid(True, alpha=0.3, linestyle='--')
+        plt.legend(loc='best', fontsize=10)
+        
+        # Format x-axis
+        plt.gcf().autofmt_xdate()
+        from matplotlib.dates import DateFormatter
+        ax = plt.gca()
+        ax.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+        
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"   ✅ Monte Carlo chart saved to: {save_path}")
+        print(f"   📈 Statistics:")
+        print(f"      Average Final: £{avg_final:.2f} ({avg_return:+.2f}%)")
+        print(f"      Median Final: £{median_final:.2f}")
+        print(f"      5th Percentile: £{percentile_5:.2f}")
+        print(f"      95th Percentile: £{percentile_95:.2f}")
+        
+        plt.close()
+    
+    def monte_carlo_backtest(self, sport: str, start_date: str, end_date: str,
+                            snapshot_interval_hours: int = 12, n_simulations: int = 100) -> Dict:
+        """
+        Run multiple Monte Carlo simulations of the backtest.
+        
+        Args:
+            sport: Sport key (e.g., 'soccer_epl')
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            snapshot_interval_hours: Hours between snapshots
+            n_simulations: Number of Monte Carlo simulations to run
+            
+        Returns:
+            Aggregated results across all simulations
+        """
+        print(f"\n{'='*80}")
+        print(f"MONTE CARLO BACKTESTING - {n_simulations} SIMULATIONS")
+        print(f"{'='*80}")
+        print(f"Sport: {sport}")
+        print(f"Date Range: {start_date} to {end_date}")
+        print(f"Initial Bankroll: £{self.initial_bankroll:.2f}")
+        print(f"{'='*80}\n")
+        
+        # Store all simulation results
+        all_results = []
+        
+        # Run first simulation to get opportunities data (fetches from API/cache)
+        print(f"[Simulation 1/{n_simulations}] Running base simulation...")
+        first_result = self.backtest(sport, start_date, end_date, snapshot_interval_hours)
+        all_results.append(first_result)
+        
+        # Store the opportunities for reuse
+        base_opportunities = self.bets_placed.copy()
+        
+        if not base_opportunities:
+            print("❌ No betting opportunities found. Cannot run Monte Carlo simulation.")
+            return {}
+        
+        print(f"\n✅ Found {len(base_opportunities)} betting opportunities")
+        print(f"Running {n_simulations - 1} additional Monte Carlo simulations...\n")
+        
+        # Run remaining simulations
+        import random
+        for sim_num in range(2, n_simulations + 1):
+            self.reset_state()
+            
+            # Re-simulate outcomes for each opportunity
+            for opp in base_opportunities:
+                # Simulate result based on true probability
+                result = 'won' if random.random() < opp['true_probability'] else 'lost'
+                self.place_bet(opp.copy(), result, bet_timestamp=opp.get('commence_time'))
+            
+            # Store this simulation
+            self.all_simulations.append({
+                'history': self.bankroll_history.copy(),
+                'timestamps': self.bankroll_timestamps.copy(),
+                'final_bankroll': self.current_bankroll
+            })
+            
+            all_results.append({
+                'final_bankroll': self.current_bankroll,
+                'total_return_pct': ((self.current_bankroll - self.initial_bankroll) / self.initial_bankroll) * 100
+            })
+            
+            if sim_num % 10 == 0 or sim_num == n_simulations:
+                print(f"  Completed {sim_num}/{n_simulations} simulations...")
+        
+        # Also add first simulation to all_simulations
+        self.all_simulations.insert(0, {
+            'history': first_result['bankroll_history'],
+            'timestamps': [bet.get('commence_time', '') for bet in base_opportunities],
+            'final_bankroll': first_result['final_bankroll']
+        })
+        
+        # Calculate aggregate statistics
+        import numpy as np
+        final_bankrolls = [r['final_bankroll'] for r in all_results]
+        returns = [r['total_return_pct'] for r in all_results]
+        
+        aggregate = {
+            'n_simulations': n_simulations,
+            'initial_bankroll': self.initial_bankroll,
+            'avg_final_bankroll': np.mean(final_bankrolls),
+            'median_final_bankroll': np.median(final_bankrolls),
+            'std_final_bankroll': np.std(final_bankrolls),
+            'min_final_bankroll': np.min(final_bankrolls),
+            'max_final_bankroll': np.max(final_bankrolls),
+            'percentile_5': np.percentile(final_bankrolls, 5),
+            'percentile_95': np.percentile(final_bankrolls, 95),
+            'avg_return_pct': np.mean(returns),
+            'median_return_pct': np.median(returns),
+            'std_return_pct': np.std(returns),
+            'min_return_pct': np.min(returns),
+            'max_return_pct': np.max(returns),
+            'probability_profit': sum(1 for r in returns if r > 0) / len(returns) * 100,
+            'total_bets': len(base_opportunities),
+            'first_simulation': first_result
+        }
+        
+        # Print summary
+        print(f"\n{'='*80}")
+        print(f"MONTE CARLO RESULTS SUMMARY")
+        print(f"{'='*80}\n")
+        print(f"Simulations: {n_simulations}")
+        print(f"Total Bets per Simulation: {aggregate['total_bets']}")
+        print(f"\nFinal Bankroll Statistics:")
+        print(f"  Average: £{aggregate['avg_final_bankroll']:.2f}")
+        print(f"  Median: £{aggregate['median_final_bankroll']:.2f}")
+        print(f"  Std Dev: £{aggregate['std_final_bankroll']:.2f}")
+        print(f"  Min: £{aggregate['min_final_bankroll']:.2f}")
+        print(f"  Max: £{aggregate['max_final_bankroll']:.2f}")
+        print(f"  5th Percentile: £{aggregate['percentile_5']:.2f}")
+        print(f"  95th Percentile: £{aggregate['percentile_95']:.2f}")
+        print(f"\nReturn Statistics:")
+        print(f"  Average: {aggregate['avg_return_pct']:+.2f}%")
+        print(f"  Median: {aggregate['median_return_pct']:+.2f}%")
+        print(f"  Std Dev: {aggregate['std_return_pct']:.2f}%")
+        print(f"  Min: {aggregate['min_return_pct']:+.2f}%")
+        print(f"  Max: {aggregate['max_return_pct']:+.2f}%")
+        print(f"\nProbability of Profit: {aggregate['probability_profit']:.1f}%")
+        print(f"\n{'='*80}\n")
+        
+        return aggregate
+    
     def save_results(self, results: Dict, filename: str = 'backtest_results.json'):
         """Save backtest results to file."""
         with open(filename, 'w') as f:
             # Convert to JSON-serializable format
             output = {k: v for k, v in results.items() if k != 'bets'}
-            output['bets_sample'] = results['bets'][:10]  # Save first 10 bets as sample
+            # Only add bets_sample if 'bets' key exists (single backtest, not Monte Carlo)
+            if 'bets' in results:
+                output['bets_sample'] = results['bets'][:10]  # Save first 10 bets as sample
             json.dump(output, f, indent=2)
         
         print(f"💾 Results saved to {filename}")
@@ -771,6 +1010,13 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
         help='Output filename (default: backtest_results.json)'
     )
     
+    parser.add_argument(
+        '--monte-carlo', '-mc',
+        type=int,
+        default=0,
+        help='Run Monte Carlo simulation with N iterations (default: 0 = single run)'
+    )
+    
     args = parser.parse_args()
     
     # Validate dates
@@ -801,27 +1047,49 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     
     # Run backtest
     backtester = HistoricalBacktester()
-    results = backtester.backtest(
-        sport=args.sport,
-        start_date=start_date,
-        end_date=end_date,
-        snapshot_interval_hours=args.interval
-    )
     
-    if results:
-        backtester.save_results(results, args.output)
+    if args.monte_carlo > 0:
+        # Run Monte Carlo simulation
+        results = backtester.monte_carlo_backtest(
+            sport=args.sport,
+            start_date=start_date,
+            end_date=end_date,
+            snapshot_interval_hours=args.interval,
+            n_simulations=args.monte_carlo
+        )
         
-        # Generate chart
-        print("\n🎨 Preparing to generate visualization...")
-        chart_path = args.output.replace('.json', '_chart.png')
-        print(f"   Chart will be saved to: {chart_path}")
-        backtester.plot_results(chart_path)
+        if results:
+            # Save aggregate results
+            backtester.save_results(results, args.output)
+            
+            # Generate Monte Carlo chart
+            print("\n🎨 Preparing to generate Monte Carlo visualization...")
+            chart_path = args.output.replace('.json', '_monte_carlo_chart.png')
+            print(f"   Chart will be saved to: {chart_path}")
+            backtester.plot_results(chart_path, show_monte_carlo=True)
+    else:
+        # Run single backtest
+        results = backtester.backtest(
+            sport=args.sport,
+            start_date=start_date,
+            end_date=end_date,
+            snapshot_interval_hours=args.interval
+        )
         
-        print("\n💡 TIP: Compare these results with your simulator:")
-        print(f"   Actual Avg EV: {results['avg_ev']*100:.2f}% vs Simulator: 2.91%")
-        print(f"   Actual Avg Odds: {results['avg_odds']:.2f} vs Simulator: 1.235")
-        print(f"   Actual Win Rate: {results['win_rate']*100:.1f}% vs Expected: 83%")
-        print(f"   Actual Avg True Prob: {results['avg_true_prob']*100:.1f}% vs Simulator: 83%")
+        if results:
+            backtester.save_results(results, args.output)
+            
+            # Generate chart
+            print("\n🎨 Preparing to generate visualization...")
+            chart_path = args.output.replace('.json', '_chart.png')
+            print(f"   Chart will be saved to: {chart_path}")
+            backtester.plot_results(chart_path)
+            
+            print("\n💡 TIP: Compare these results with your simulator:")
+            print(f"   Actual Avg EV: {results['avg_ev']*100:.2f}% vs Simulator: 2.91%")
+            print(f"   Actual Avg Odds: {results['avg_odds']:.2f} vs Simulator: 1.235")
+            print(f"   Actual Win Rate: {results['win_rate']*100:.1f}% vs Expected: 83%")
+            print(f"   Actual Avg True Prob: {results['avg_true_prob']*100:.1f}% vs Simulator: 83%")
 
 
 if __name__ == '__main__':
