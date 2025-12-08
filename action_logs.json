@@ -619,5 +619,117 @@
         "args": {}
       }
     ]
+  },
+  "www.888sport.com": {
+    "20251208_214700": [
+      {
+        "tool": "browser_navigate",
+        "args": {
+          "url": "https://www.888sport.com/football/england/english-premier-league/wolves-vs-brentford-e-6820775/"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "LOG IN button",
+          "ref": "e22"
+        }
+      }
+    ],
+    "20251208_214757": [
+      {
+        "tool": "browser_navigate",
+        "args": {
+          "url": "https://www.888sport.com/football/england/english-premier-league/wolves-vs-brentford-e-6820775/"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Accept cookies button",
+          "ref": "e246"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "LOG IN button",
+          "ref": "e22"
+        }
+      },
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Username textbox",
+          "ref": "e1278",
+          "text": "[REDACTED]"
+        }
+      },
+      {
+        "tool": "browser_type",
+        "args": {
+          "element": "Password textbox",
+          "ref": "e1280",
+          "text": "[REDACTED]"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Login button",
+          "ref": "e1284"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Dismiss button",
+          "ref": "e1342"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Brentford odds button 23/20",
+          "ref": "e365"
+        }
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Stake textbox",
+          "ref": "e1733"
+        }
+      },
+      {
+        "tool": "browser_run_code",
+        "args": {
+          "code": "await page.keyboard.type('0.65');"
+        }
+      },
+      {
+        "tool": "browser_snapshot",
+        "args": {}
+      },
+      {
+        "tool": "browser_click",
+        "args": {
+          "element": "Place Bet button",
+          "ref": "e631"
+        }
+      }
+    ]
   }
 }
