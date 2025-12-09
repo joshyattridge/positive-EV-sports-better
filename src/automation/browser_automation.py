@@ -458,7 +458,7 @@ class BrowserAutomation:
             
             # Get Claude's response
             response = self.client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=4096,
                 system=system_prompt,
                 messages=messages,
