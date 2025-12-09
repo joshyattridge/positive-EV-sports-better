@@ -20,6 +20,7 @@ from src.core.positive_ev_scanner import PositiveEVScanner
 from src.automation.browser_automation import BrowserAutomation
 from src.core.kelly_criterion import KellyCriterion
 from src.utils.bet_logger import BetLogger
+from anthropic import Anthropic
 
 # Load environment variables
 load_dotenv()
@@ -42,6 +43,7 @@ class AutoBetPlacer:
         self.automation = BrowserAutomation(headless=headless)
         self.kelly = KellyCriterion()
         self.bet_logger = BetLogger()
+        self.anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         
     def get_bookmaker_credentials(self, bookmaker_key: str) -> Dict[str, str]:
         """
@@ -262,6 +264,54 @@ ACTION_SUCCESS: place_bet_for_{opportunity['bookmaker_key']}
         
         return outcome
     
+    async def _verify_bet_placement(self, conversation_history: List[Dict], final_response: str) -> bool:
+        """
+        Ask the LLM to analyze the conversation history and determine if the bet was actually placed.
+        
+        Args:
+            conversation_history: The full conversation history from the automation
+            final_response: The final response from the automation
+            
+        Returns:
+            True if bet was placed, False otherwise
+        """
+        verification_prompt = f"""Based on the conversation history and final response below, determine if a bet was ACTUALLY PLACED and CONFIRMED on the betting website.
+
+A bet is considered "placed" ONLY if:
+1. The bet slip was filled out correctly
+2. The "Place Bet" or "Confirm" button was clicked
+3. A confirmation message or bet reference was received from the bookmaker
+
+A bet is NOT placed if:
+- Odds didn't meet requirements
+- The process was stopped or aborted
+- There was an error or issue
+- The automation couldn't complete the placement
+- Only navigation or viewing occurred without final confirmation
+
+Final Response: {final_response}
+
+Answer with ONLY one word: "YES" if the bet was successfully placed and confirmed, or "NO" if it was not placed.
+"""
+        
+        try:
+            # Create a verification request
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=10,
+                messages=[
+                    {"role": "user", "content": verification_prompt}
+                ]
+            )
+            
+            answer = response.content[0].text.strip().upper()
+            return answer == "YES"
+            
+        except Exception as e:
+            print(f"⚠️ Error verifying bet placement: {e}")
+            # Conservative default: assume bet was NOT placed if verification fails
+            return False
+    
     async def place_best_bet(self, dry_run: bool = False) -> Dict[str, Any]:
         """
         Find the best opportunity and automatically place the bet.
@@ -314,18 +364,24 @@ ACTION_SUCCESS: place_bet_for_{opportunity['bookmaker_key']}
         print("\n" + "="*80)
         print("🤖 STARTING AUTOMATED BET PLACEMENT")
         print("="*80 + "\n")
-        
         try:
             result = await self.automation.automate_task(prompt, max_iterations=50)
             
+            # Ask the LLM to verify if the bet was actually placed by analyzing the conversation
+            bet_actually_placed = await self._verify_bet_placement(
+                result.get('conversation_history', []),
+                result['response']
+            )
+            
             # Log the bet to CSV
-            if result['success']:
+            if result['success'] and bet_actually_placed:
                 self.bet_logger.log_bet(best_opp, bet_placed=True, notes="Bet placed successfully via automation")
             else:
-                self.bet_logger.log_bet(best_opp, bet_placed=False, notes=f"Bet placement failed: {result['response']}")
+                failure_reason = result['response']
+                self.bet_logger.log_bet(best_opp, bet_placed=False, notes=failure_reason)
             
             return {
-                'success': result['success'],
+                'success': result['success'] and bet_actually_placed,
                 'message': result['response'],
                 'opportunity': best_opp,
                 'automation_result': result
