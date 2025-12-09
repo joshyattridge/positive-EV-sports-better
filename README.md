@@ -22,6 +22,33 @@ The project includes a powerful browser automation tool (`browser_automation.py`
 - **OpenAI API (GPT-4)**: For understanding natural language instructions
 - **Microsoft Playwright MCP Server**: For executing browser actions with accessibility-based automation
 
+## Project Structure
+
+```
+positive-EV-sports-better/
+├── src/                      # Source code
+│   ├── core/                # Core betting logic
+│   │   ├── positive_ev_scanner.py  # +EV opportunity scanner
+│   │   └── kelly_criterion.py      # Kelly Criterion bet sizing
+│   ├── automation/          # Browser automation
+│   │   ├── browser_automation.py   # AI-powered browser control
+│   │   └── action_logger.py        # Action logging
+│   └── utils/               # Utilities
+│       ├── bet_logger.py           # Bet tracking/logging
+│       └── backtest.py             # Historical backtesting
+├── scripts/                 # Executable scripts
+│   ├── auto_bet_placer.py  # Automated bet placement
+│   └── manage_bets.py      # Bet management utility
+├── data/                    # Data files
+│   ├── bet_history.csv     # Bet records
+│   ├── action_logs.json    # Browser action logs
+│   ├── backtest_cache/     # Cached backtest data
+│   └── browser_states/     # Saved browser sessions
+├── requirements.txt        # Python dependencies
+├── .env                    # Configuration (create from .env.example)
+└── README.md              # This file
+```
+
 ### Quick Start
 
 1. **Clone the repository**:
@@ -77,17 +104,78 @@ BANKROLL=1000          # Your total betting bankroll
 KELLY_FRACTION=0.25    # Fraction of Kelly to use (0.25 = quarter Kelly, 0.5 = half Kelly, 1.0 = full Kelly)
 ```
 
-5. **Run an example**:
+5. **Activate virtual environment** (if not already active):
 
 ```bash
-python examples.py
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+
+6. **Run the tools**:
+
+```bash
+# Using the helper script (recommended)
+./run.sh scan                    # Scan for +EV opportunities
+./run.sh auto-bet --dry-run     # Place bets automatically (dry run)
+./run.sh bets summary           # View bet history
+./run.sh bets pending           # List pending bets
+./run.sh bets update            # Update bet results
+./run.sh bets export            # Export for analysis
+
+# Or directly with venv Python
+.venv/bin/python -m src.core.positive_ev_scanner
+.venv/bin/python scripts/auto_bet_placer.py --dry-run
+.venv/bin/python scripts/manage_bets.py summary
+```
+
+### Helper Script (`run.sh`)
+
+The project includes a convenient helper script that automatically uses the correct Python environment:
+
+```bash
+./run.sh <command> [options]
+```
+
+**Available Commands:**
+
+- `scan` - Scan for positive EV betting opportunities
+- `auto-bet [--dry-run]` - Automatically place the best bet
+  - `--dry-run` flag runs without placing actual bets (recommended for testing)
+- `bets summary` - Show bet history summary
+- `bets pending` - List pending bets awaiting results
+- `bets update` - Interactively update bet results (win/loss)
+- `bets export` - Export bet history for analysis
+- `backtest` - Run historical backtesting
+
+**Examples:**
+
+```bash
+# Scan for opportunities
+./run.sh scan
+
+# Test automated betting (safe mode)
+./run.sh auto-bet --dry-run
+
+# Place actual bet (be careful!)
+./run.sh auto-bet
+
+# Check your bet history
+./run.sh bets summary
+
+# Update a bet result
+./run.sh bets update
 ```
 
 ### Simple Usage Example
 
 ```python
 import asyncio
-from browser_automation import BrowserAutomation
+import sys
+from pathlib import Path
+
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from src.automation.browser_automation import BrowserAutomation
 
 async def main():
     automation = BrowserAutomation(headless=False)

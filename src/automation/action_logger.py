@@ -30,7 +30,7 @@ class ActionLogger:
     }
     """
     
-    def __init__(self, log_path: str = "action_logs.json"):
+    def __init__(self, log_path: str = "data/action_logs.json"):
         """
         Initialize the action logger.
         

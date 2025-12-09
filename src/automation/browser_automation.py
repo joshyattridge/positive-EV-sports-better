@@ -14,7 +14,7 @@ from anthropic import Anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from dotenv import load_dotenv
-from action_logger import ActionLogger
+from src.automation.action_logger import ActionLogger
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,8 +26,8 @@ class BrowserAutomation:
     """
     
     def __init__(self, anthropic_api_key: Optional[str] = None, headless: bool = False, 
-                 action_log_path: str = "action_logs.json",
-                 state_dir: str = "browser_states"):
+                 action_log_path: str = "data/action_logs.json",
+                 state_dir: str = "data/browser_states"):
         """
         Initialize the browser automation client.
         

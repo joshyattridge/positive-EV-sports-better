@@ -10,11 +10,16 @@ import os
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 from dotenv import load_dotenv
+import sys
+from pathlib import Path
 
-from positive_ev_scanner import PositiveEVScanner
-from browser_automation import BrowserAutomation
-from kelly_criterion import KellyCriterion
-from bet_logger import BetLogger
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.core.positive_ev_scanner import PositiveEVScanner
+from src.automation.browser_automation import BrowserAutomation
+from src.core.kelly_criterion import KellyCriterion
+from src.utils.bet_logger import BetLogger
 
 # Load environment variables
 load_dotenv()

@@ -13,7 +13,12 @@ import sys
 import csv
 from datetime import datetime
 from pathlib import Path
-from bet_logger import BetLogger
+import sys
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.utils.bet_logger import BetLogger
 
 
 def view_summary():

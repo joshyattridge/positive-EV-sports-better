@@ -57,7 +57,7 @@ class BetLogger:
         'notes'  # Empty - for any additional notes
     ]
     
-    def __init__(self, log_path: str = "bet_history.csv"):
+    def __init__(self, log_path: str = "data/bet_history.csv"):
         """
         Initialize the bet logger.
         

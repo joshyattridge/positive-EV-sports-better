@@ -15,7 +15,7 @@ import json
 import time
 import hashlib
 from pathlib import Path
-from kelly_criterion import KellyCriterion
+from src.core.kelly_criterion import KellyCriterion
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
@@ -36,7 +36,7 @@ class HistoricalBacktester:
         self.base_url = "https://api.the-odds-api.com/v4"
         
         # Create cache directory
-        self.cache_dir = Path('backtest_cache')
+        self.cache_dir = Path('data/backtest_cache')
         self.cache_dir.mkdir(exist_ok=True)
         
         # Strategy parameters from .env

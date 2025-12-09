@@ -11,8 +11,8 @@ from datetime import datetime
 import time
 import os
 from dotenv import load_dotenv
-from kelly_criterion import KellyCriterion
-from bet_logger import BetLogger
+from src.core.kelly_criterion import KellyCriterion
+from src.utils.bet_logger import BetLogger
 
 # Load environment variables from .env file
 load_dotenv()
