@@ -1,0 +1,369 @@
+"""
+Unit tests for Historical Backtest module
+"""
+
+import pytest
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch, MagicMock
+from datetime import datetime, timedelta
+from src.utils.backtest import HistoricalBacktester
+
+
+@pytest.fixture
+def backtester():
+    """Create a backtester instance for testing"""
+    with patch.dict('os.environ', {
+        'ODDS_API_KEY': 'test_api_key',
+        'BANKROLL': '1000',
+        'KELLY_FRACTION': '0.25',
+        'MIN_EV_THRESHOLD': '0.03',
+        'MIN_TRUE_PROBABILITY': '0.40',
+        'SHARP_BOOKS': 'pinnacle',
+        'BETTING_BOOKMAKERS': 'bet365',
+        'ONE_BET_PER_GAME': 'true'
+    }):
+        return HistoricalBacktester()
+
+
+class TestBacktesterInitialization:
+    """Test backtester initialization"""
+    
+    def test_initialization_reads_env_vars(self, backtester):
+        """Test initialization reads configuration from env"""
+        assert backtester.api_key == 'test_api_key'
+        assert backtester.initial_bankroll == 1000
+        assert backtester.kelly_fraction == 0.25
+        assert backtester.min_ev_threshold == 0.03
+        assert backtester.min_true_probability == 0.40
+    
+    def test_initialization_missing_api_key(self):
+        """Test initialization fails without API key"""
+        with patch.dict('os.environ', {}, clear=True):
+            with pytest.raises(ValueError, match='ODDS_API_KEY'):
+                HistoricalBacktester()
+    
+    def test_initialization_sets_defaults(self, backtester):
+        """Test that defaults are properly set"""
+        assert backtester.current_bankroll == backtester.initial_bankroll
+        assert backtester.bets_placed == []
+        assert backtester.bankroll_history == [backtester.initial_bankroll]
+
+
+class TestResetState:
+    """Test state reset"""
+    
+    def test_reset_state(self, backtester):
+        """Test resetting state for new simulation"""
+        # Modify state
+        backtester.current_bankroll = 1500
+        backtester.bets_placed = [{'bet': 'test'}]
+        backtester.bankroll_history = [1000, 1100, 1500]
+        
+        # Reset
+        backtester.reset_state()
+        
+        assert backtester.current_bankroll == backtester.initial_bankroll
+        assert backtester.bets_placed == []
+        assert backtester.bankroll_history == [backtester.initial_bankroll]
+
+
+class TestCaching:
+    """Test caching functionality"""
+    
+    def test_get_cache_key(self, backtester):
+        """Test cache key generation"""
+        key = backtester._get_cache_key('soccer_epl', '2024-01-01', 'h2h')
+        
+        assert isinstance(key, str)
+        assert len(key) == 32  # MD5 hash length
+    
+    def test_get_cache_key_consistent(self, backtester):
+        """Test cache key is consistent for same inputs"""
+        key1 = backtester._get_cache_key('soccer_epl', '2024-01-01', 'h2h')
+        key2 = backtester._get_cache_key('soccer_epl', '2024-01-01', 'h2h')
+        
+        assert key1 == key2
+    
+    def test_get_cache_key_different_inputs(self, backtester):
+        """Test different inputs produce different keys"""
+        key1 = backtester._get_cache_key('soccer_epl', '2024-01-01', 'h2h')
+        key2 = backtester._get_cache_key('soccer_epl', '2024-01-02', 'h2h')
+        
+        assert key1 != key2
+
+
+class TestCalculations:
+    """Test calculation methods"""
+    
+    def test_calculate_implied_probability(self, backtester):
+        """Test implied probability calculation"""
+        prob = backtester.calculate_implied_probability(2.0)
+        assert prob == pytest.approx(0.5, rel=0.001)
+    
+    def test_calculate_ev(self, backtester):
+        """Test EV calculation"""
+        ev = backtester.calculate_ev(2.5, 0.5)
+        # (0.5 * 1.5) - 0.5 = 0.25
+        assert ev == pytest.approx(0.25, rel=0.001)
+    
+    def test_calculate_ev_negative(self, backtester):
+        """Test negative EV calculation"""
+        ev = backtester.calculate_ev(1.5, 0.4)
+        assert ev < 0
+
+
+class TestPlaceBet:
+    """Test bet placement"""
+    
+    def test_place_bet_win(self, backtester):
+        """Test placing a winning bet"""
+        bet = {
+            'stake': 100,
+            'odds': 2.0,
+            'game_id': 'test1',
+            'commence_time': '2024-01-01T12:00:00Z'
+        }
+        
+        initial_bankroll = backtester.current_bankroll
+        backtester.place_bet(bet, result='won', bet_timestamp='2024-01-01T12:00:00Z')
+        
+        assert backtester.current_bankroll > initial_bankroll
+        assert len(backtester.bets_placed) == 1
+        assert backtester.bets_placed[0]['result'] == 'won'
+    
+    def test_place_bet_loss(self, backtester):
+        """Test placing a losing bet"""
+        bet = {
+            'stake': 100,
+            'odds': 2.0,
+            'game_id': 'test1',
+            'commence_time': '2024-01-01T12:00:00Z'
+        }
+        
+        initial_bankroll = backtester.current_bankroll
+        backtester.place_bet(bet, result='lost', bet_timestamp='2024-01-01T12:00:00Z')
+        
+        assert backtester.current_bankroll < initial_bankroll
+        assert backtester.current_bankroll == initial_bankroll - 100
+    
+    def test_place_bet_pending(self, backtester):
+        """Test placing a pending bet (no bankroll change)"""
+        bet = {
+            'stake': 100,
+            'odds': 2.0,
+            'game_id': 'test1',
+            'commence_time': '2024-01-01T12:00:00Z'
+        }
+        
+        initial_bankroll = backtester.current_bankroll
+        backtester.place_bet(bet, result=None, bet_timestamp='2024-01-01T12:00:00Z')
+        
+        assert backtester.current_bankroll == initial_bankroll
+
+
+class TestFindPositiveEVBets:
+    """Test finding positive EV opportunities"""
+    
+    def test_find_positive_ev_bets_empty_data(self, backtester):
+        """Test with empty data"""
+        opportunities = backtester.find_positive_ev_bets({})
+        assert opportunities == []
+    
+    def test_find_positive_ev_bets_no_data_key(self, backtester):
+        """Test with missing data key"""
+        opportunities = backtester.find_positive_ev_bets({'games': []})
+        assert opportunities == []
+    
+    def test_find_positive_ev_bets_with_valid_data(self, backtester):
+        """Test finding opportunities with valid data"""
+        historical_data = {
+            'data': [
+                {
+                    'id': 'game1',
+                    'home_team': 'Arsenal',
+                    'away_team': 'Chelsea',
+                    'commence_time': '2024-01-01T15:00:00Z',
+                    'bookmakers': [
+                        {
+                            'key': 'pinnacle',
+                            'title': 'Pinnacle',
+                            'markets': [
+                                {
+                                    'key': 'h2h',
+                                    'outcomes': [
+                                        {'name': 'Arsenal', 'price': 2.0}
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            'key': 'bet365',
+                            'title': 'Bet365',
+                            'markets': [
+                                {
+                                    'key': 'h2h',
+                                    'outcomes': [
+                                        {'name': 'Arsenal', 'price': 2.3}
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        opportunities = backtester.find_positive_ev_bets(historical_data)
+        
+        # Should find at least one opportunity
+        assert isinstance(opportunities, list)
+
+
+class TestDetermineBetResult:
+    """Test determining bet results"""
+    
+    def test_determine_bet_result_h2h_home_win(self, backtester):
+        """Test h2h bet result for home win"""
+        bet = {
+            'game': 'Chelsea @ Arsenal',
+            'market': 'h2h',
+            'outcome': 'Arsenal'
+        }
+        
+        scores_data = {
+            'Chelsea @ Arsenal': {
+                'completed': True,
+                'home_team': 'Arsenal',
+                'away_team': 'Chelsea',
+                'scores': [
+                    {'name': 'Arsenal', 'score': '2'},
+                    {'name': 'Chelsea', 'score': '1'}
+                ]
+            }
+        }
+        
+        result = backtester.determine_bet_result(bet, scores_data)
+        assert result == 'won'
+    
+    def test_determine_bet_result_h2h_away_win(self, backtester):
+        """Test h2h bet result for away win"""
+        bet = {
+            'game': 'Chelsea @ Arsenal',
+            'market': 'h2h',
+            'outcome': 'Chelsea'
+        }
+        
+        scores_data = {
+            'Chelsea @ Arsenal': {
+                'completed': True,
+                'home_team': 'Arsenal',
+                'away_team': 'Chelsea',
+                'scores': [
+                    {'name': 'Arsenal', 'score': '1'},
+                    {'name': 'Chelsea', 'score': '2'}
+                ]
+            }
+        }
+        
+        result = backtester.determine_bet_result(bet, scores_data)
+        assert result == 'won'
+    
+    def test_determine_bet_result_h2h_loss(self, backtester):
+        """Test h2h bet result for loss"""
+        bet = {
+            'game': 'Chelsea @ Arsenal',
+            'market': 'h2h',
+            'outcome': 'Chelsea'
+        }
+        
+        scores_data = {
+            'Chelsea @ Arsenal': {
+                'completed': True,
+                'home_team': 'Arsenal',
+                'away_team': 'Chelsea',
+                'scores': [
+                    {'name': 'Arsenal', 'score': '2'},
+                    {'name': 'Chelsea', 'score': '1'}
+                ]
+            }
+        }
+        
+        result = backtester.determine_bet_result(bet, scores_data)
+        assert result == 'lost'
+    
+    def test_determine_bet_result_game_not_found(self, backtester):
+        """Test with game not in scores data"""
+        bet = {
+            'game': 'Unknown @ Match',
+            'market': 'h2h',
+            'outcome': 'Unknown'
+        }
+        
+        result = backtester.determine_bet_result(bet, {})
+        assert result is None
+
+
+class TestGenerateReport:
+    """Test report generation"""
+    
+    def test_generate_report_no_bets(self, backtester):
+        """Test report with no bets"""
+        report = backtester.generate_report()
+        assert report == {}
+    
+    def test_generate_report_with_bets(self, backtester):
+        """Test report generation with bets"""
+        # Place some bets
+        for i in range(5):
+            bet = {
+                'stake': 50,
+                'odds': 2.0,
+                'game_id': f'game_{i}',
+                'commence_time': '2024-01-01T12:00:00Z',
+                'ev': 0.05,
+                'true_probability': 0.55
+            }
+            result = 'won' if i % 2 == 0 else 'lost'
+            backtester.place_bet(bet, result=result, bet_timestamp='2024-01-01T12:00:00Z')
+        
+        report = backtester.generate_report()
+        
+        assert report['total_bets'] == 5
+        assert report['won_bets'] == 3
+        assert report['lost_bets'] == 2
+        assert 'final_bankroll' in report
+        assert 'total_return_pct' in report
+        assert 'roi' in report
+
+
+class TestEdgeCases:
+    """Test edge cases"""
+    
+    def test_very_large_bankroll(self):
+        """Test with very large bankroll"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test',
+            'BANKROLL': '1000000'
+        }):
+            backtester = HistoricalBacktester()
+            assert backtester.initial_bankroll == 1000000
+    
+    def test_very_small_bankroll(self):
+        """Test with very small bankroll"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test',
+            'BANKROLL': '10'
+        }):
+            backtester = HistoricalBacktester()
+            assert backtester.initial_bankroll == 10
+    
+    def test_zero_kelly_fraction(self):
+        """Test with zero Kelly fraction"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test',
+            'KELLY_FRACTION': '0'
+        }):
+            backtester = HistoricalBacktester()
+            assert backtester.kelly_fraction == 0

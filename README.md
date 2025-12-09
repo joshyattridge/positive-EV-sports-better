@@ -273,10 +273,55 @@ With a £1000 bankroll and 25% Kelly fraction:
 - Node.js (for Playwright MCP server)
 - OpenAI API key
 
+## Testing
+
+The project includes a comprehensive test suite with 170+ unit tests covering all modules.
+
+### Running Tests
+
+```bash
+# Install test dependencies
+pip install -r requirements.txt
+
+# Run all tests
+pytest
+
+# Run with coverage report
+pytest --cov=src --cov-report=html
+
+# Run specific test file
+pytest tests/test_kelly_criterion.py
+
+# Use the convenient test runner script
+./run_tests.sh              # Run all tests
+./run_tests.sh coverage     # Run with coverage
+./run_tests.sh kelly        # Run Kelly Criterion tests only
+```
+
+### Test Coverage
+
+- **Kelly Criterion**: 15 tests - bet sizing, expected profit calculations
+- **Positive EV Scanner**: 35 tests - EV calculations, odds conversions, sorting
+- **Bet Logger**: 25 tests - logging, tracking, summary generation
+- **Backtest**: 25 tests - historical testing, caching, reports
+- **Action Logger**: 30 tests - automation logging, data redaction
+- **Auto Bet Placer**: 20 tests - bet placement, verification
+- **Manage Bets**: 15 tests - CLI functions, result updates
+
+See [TEST_SUITE_SUMMARY.md](TEST_SUITE_SUMMARY.md) for detailed test documentation.
+
+### Continuous Integration
+
+Tests run automatically on every push via GitHub Actions. See `.github/workflows/tests.yml`.
+
 ## License
 
 MIT License
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please:
+1. Write tests for new features
+2. Ensure all tests pass: `pytest`
+3. Maintain test coverage above 80%
+4. Submit a Pull Request
