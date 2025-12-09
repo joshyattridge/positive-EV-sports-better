@@ -321,6 +321,7 @@ MIT License
 ## Contributing
 
 Contributions are welcome! Please:
+
 1. Write tests for new features
 2. Ensure all tests pass: `pytest`
 3. Maintain test coverage above 80%
