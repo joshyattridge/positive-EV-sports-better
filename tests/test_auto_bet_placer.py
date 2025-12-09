@@ -14,9 +14,10 @@ def auto_bet_placer():
         'ODDS_API_KEY': 'test_api_key',
         'ANTHROPIC_API_KEY': 'test_anthropic_key',
         'BANKROLL': '1000',
+        'BETTING_BOOKMAKERS': 'bet365',
         'BET365_USERNAME': 'testuser',
         'BET365_PASSWORD': 'testpass'
-    }):
+    }, clear=True):
         with patch('scripts.auto_bet_placer.BrowserAutomation'), \
              patch('scripts.auto_bet_placer.Anthropic'):
             return AutoBetPlacer(headless=True)
@@ -31,6 +32,91 @@ class TestAutoBetPlacerInitialization:
         assert auto_bet_placer.automation is not None
         assert auto_bet_placer.kelly is not None
         assert auto_bet_placer.bet_logger is not None
+
+
+class TestValidateBookmakerCredentials:
+    """Test bookmaker credential validation"""
+    
+    def test_validate_credentials_all_present(self):
+        """Test validation passes when all bookmaker credentials are present"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test',
+            'ANTHROPIC_API_KEY': 'test',
+            'BETTING_BOOKMAKERS': 'bet365,williamhill',
+            'BET365_USERNAME': 'user1',
+            'BET365_PASSWORD': 'pass1',
+            'WILLIAMHILL_USERNAME': 'user2',
+            'WILLIAMHILL_PASSWORD': 'pass2'
+        }, clear=True):
+            with patch('scripts.auto_bet_placer.BrowserAutomation'), \
+                 patch('scripts.auto_bet_placer.Anthropic'):
+                # Should not raise an exception
+                placer = AutoBetPlacer(headless=True)
+                assert placer is not None
+    
+    def test_validate_credentials_missing_username(self):
+        """Test validation fails when username is missing"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test',
+            'ANTHROPIC_API_KEY': 'test',
+            'BETTING_BOOKMAKERS': 'bet365,skybet',
+            'BET365_USERNAME': 'user1',
+            'BET365_PASSWORD': 'pass1',
+            'SKYBET_PASSWORD': 'pass2'
+            # Missing SKYBET_USERNAME
+        }, clear=True):
+            with patch('scripts.auto_bet_placer.BrowserAutomation'), \
+                 patch('scripts.auto_bet_placer.Anthropic'):
+                with pytest.raises(ValueError, match='Missing credentials for bookmaker'):
+                    AutoBetPlacer(headless=True)
+    
+    def test_validate_credentials_missing_password(self):
+        """Test validation fails when password is missing"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test',
+            'ANTHROPIC_API_KEY': 'test',
+            'BETTING_BOOKMAKERS': 'bet365,williamhill',
+            'BET365_USERNAME': 'user1',
+            'BET365_PASSWORD': 'pass1',
+            'WILLIAMHILL_USERNAME': 'user2'
+            # Missing WILLIAMHILL_PASSWORD
+        }, clear=True):
+            with patch('scripts.auto_bet_placer.BrowserAutomation'), \
+                 patch('scripts.auto_bet_placer.Anthropic'):
+                with pytest.raises(ValueError, match='Missing credentials for bookmaker'):
+                    AutoBetPlacer(headless=True)
+    
+    def test_validate_credentials_multiple_missing(self):
+        """Test validation reports all missing bookmakers"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test',
+            'ANTHROPIC_API_KEY': 'test',
+            'BETTING_BOOKMAKERS': 'bet365,williamhill,skybet',
+            'BET365_USERNAME': 'user1',
+            'BET365_PASSWORD': 'pass1'
+            # Missing williamhill and skybet
+        }, clear=True):
+            with patch('scripts.auto_bet_placer.BrowserAutomation'), \
+                 patch('scripts.auto_bet_placer.Anthropic'):
+                with pytest.raises(ValueError) as exc_info:
+                    AutoBetPlacer(headless=True)
+                
+                error_msg = str(exc_info.value)
+                assert 'williamhill' in error_msg
+                assert 'skybet' in error_msg
+    
+    def test_validate_credentials_no_bookmakers_configured(self):
+        """Test validation passes when no bookmakers are configured"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test',
+            'ANTHROPIC_API_KEY': 'test',
+            'BETTING_BOOKMAKERS': ''
+        }, clear=True):
+            with patch('scripts.auto_bet_placer.BrowserAutomation'), \
+                 patch('scripts.auto_bet_placer.Anthropic'):
+                # Should not raise an exception
+                placer = AutoBetPlacer(headless=True)
+                assert placer is not None
 
 
 class TestGetBookmakerCredentials:
@@ -316,8 +402,9 @@ class TestEdgeCases:
         """Test initialization in headless mode"""
         with patch.dict('os.environ', {
             'ODDS_API_KEY': 'test',
-            'ANTHROPIC_API_KEY': 'test'
-        }):
+            'ANTHROPIC_API_KEY': 'test',
+            'BETTING_BOOKMAKERS': ''
+        }, clear=True):
             with patch('scripts.auto_bet_placer.BrowserAutomation') as mock_browser, \
                  patch('scripts.auto_bet_placer.Anthropic'):
                 placer = AutoBetPlacer(headless=True)
@@ -327,8 +414,9 @@ class TestEdgeCases:
         """Test initialization in non-headless mode"""
         with patch.dict('os.environ', {
             'ODDS_API_KEY': 'test',
-            'ANTHROPIC_API_KEY': 'test'
-        }):
+            'ANTHROPIC_API_KEY': 'test',
+            'BETTING_BOOKMAKERS': ''
+        }, clear=True):
             with patch('scripts.auto_bet_placer.BrowserAutomation') as mock_browser, \
                  patch('scripts.auto_bet_placer.Anthropic'):
                 placer = AutoBetPlacer(headless=False)

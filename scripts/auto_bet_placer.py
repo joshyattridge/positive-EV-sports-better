@@ -45,6 +45,42 @@ class AutoBetPlacer:
         self.bet_logger = BetLogger()
         self.anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         
+        # Validate that all bookmakers in BETTING_BOOKMAKERS have credentials
+        self._validate_bookmaker_credentials()
+    
+    def _validate_bookmaker_credentials(self) -> None:
+        """
+        Validate that all bookmakers in BETTING_BOOKMAKERS have credentials configured.
+        
+        Raises:
+            ValueError: If any bookmaker is missing credentials
+        """
+        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', '')
+        if not betting_bookmakers_str:
+            return  # No bookmakers configured
+        
+        betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
+        missing_credentials = []
+        
+        for bookmaker_key in betting_bookmakers:
+            env_prefix = bookmaker_key.upper()
+            username = os.getenv(f'{env_prefix}_USERNAME')
+            password = os.getenv(f'{env_prefix}_PASSWORD')
+            
+            if not username or not password:
+                missing_credentials.append(bookmaker_key)
+        
+        if missing_credentials:
+            error_msg = (
+                f"Missing credentials for bookmaker(s): {', '.join(missing_credentials)}\n"
+                f"Please set the following environment variables in your .env file:\n"
+            )
+            for bookmaker in missing_credentials:
+                env_prefix = bookmaker.upper()
+                error_msg += f"  - {env_prefix}_USERNAME\n"
+                error_msg += f"  - {env_prefix}_PASSWORD\n"
+            raise ValueError(error_msg)
+        
     def get_bookmaker_credentials(self, bookmaker_key: str) -> Dict[str, str]:
         """
         Get username and password for a specific bookmaker from environment variables.
