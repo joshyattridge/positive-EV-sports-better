@@ -77,6 +77,7 @@ class PositiveEVScanner:
         # Filtering configuration - read from env or use defaults
         self.one_bet_per_game = os.getenv('ONE_BET_PER_GAME', 'false').lower() == 'true'
         self.skip_already_bet_games = os.getenv('SKIP_ALREADY_BET_GAMES', 'true').lower() == 'true'
+        self.max_bet_failures = int(os.getenv('MAX_BET_FAILURES', '3'))
         
     def get_available_sports(self) -> List[Dict]:
         """
@@ -287,6 +288,11 @@ class PositiveEVScanner:
             if already_bet_game_ids:
                 print(f"🚫 Filtering out {len(already_bet_game_ids)} games with existing bets")
         
+        # Get failed bet opportunities to ignore (if max_failures > 0)
+        failed_opportunities = set()
+        if self.max_bet_failures > 0:
+            failed_opportunities = self.bet_logger.get_failed_bet_opportunities(max_failures=self.max_bet_failures)
+        
         for game in games:
             # Get game ID from API
             game_id = game.get('id', '')
@@ -368,6 +374,11 @@ class PositiveEVScanner:
                         
                         # Apply both EV and probability filters
                         if ev >= self.min_ev_threshold and true_probability >= self.min_true_probability:
+                            # Skip opportunities that have failed multiple times
+                            opportunity_key = (game_id, market_type, outcome_name)
+                            if opportunity_key in failed_opportunities:
+                                continue
+                            
                             # Get bookmaker link from API if available, otherwise generate one
                             bookmaker_url = odds_data.get('link') or self.generate_bookmaker_link(
                                 odds_data['bookmaker'],

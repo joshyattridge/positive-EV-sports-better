@@ -219,6 +219,50 @@ class BetLogger:
         
         return game_ids
     
+    def get_failed_bet_opportunities(self, max_failures: int = 3) -> set:
+        """
+        Get a set of unique bet opportunities that have failed multiple times.
+        
+        This identifies bets that have been attempted but not placed (failed) 
+        multiple times, so they can be skipped in future runs.
+        
+        Args:
+            max_failures: Maximum number of failures before ignoring (default: 3)
+            
+        Returns:
+            Set of tuples (game_id, market, outcome) for failed bets
+        """
+        failed_bets = {}  # key: (game_id, market, outcome), value: failure count
+        
+        try:
+            if not self.log_path.exists():
+                return set()
+            
+            with open(self.log_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    game_id = row.get('game_id', '').strip()
+                    market = row.get('market', '').strip()
+                    outcome = row.get('outcome', '').strip()
+                    bet_result = row.get('bet_result', '').strip()
+                    
+                    # Count failures (not_placed status)
+                    if game_id and market and outcome and bet_result == 'not_placed':
+                        key = (game_id, market, outcome)
+                        failed_bets[key] = failed_bets.get(key, 0) + 1
+            
+            # Return only those that have failed >= max_failures times
+            ignored_bets = {key for key, count in failed_bets.items() if count >= max_failures}
+            
+            if ignored_bets:
+                print(f"🚫 Ignoring {len(ignored_bets)} bet opportunities that failed {max_failures}+ times")
+            
+            return ignored_bets
+            
+        except Exception as e:
+            print(f"⚠️  Error reading failed bet history: {e}")
+            return set()
+    
     def get_bet_summary(self) -> Dict[str, Any]:
         """
         Get a summary of all logged bets.

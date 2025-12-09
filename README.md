@@ -102,6 +102,9 @@ MIN_EV_THRESHOLD=0.02
 # Kelly Criterion Bankroll Management
 BANKROLL=1000          # Your total betting bankroll
 KELLY_FRACTION=0.25    # Fraction of Kelly to use (0.25 = quarter Kelly, 0.5 = half Kelly, 1.0 = full Kelly)
+
+# Failure Handling
+MAX_BET_FAILURES=3     # Skip bets that fail this many times (set to 0 to disable)
 ```
 
 5. **Activate virtual environment** (if not already active):
@@ -145,6 +148,7 @@ The project includes a convenient helper script that automatically uses the corr
 - `bets update` - Interactively update bet results (win/loss)
 - `bets export` - Export bet history for analysis
 - `backtest` - Run historical backtesting
+- `ignored` - Show bets being ignored due to repeated failures
 
 **Examples:**
 
@@ -163,6 +167,30 @@ The project includes a convenient helper script that automatically uses the corr
 
 # Update a bet result
 ./run.sh bets update
+
+# View bets being ignored due to repeated failures
+./run.sh ignored
+```
+
+### Automatic Failure Handling
+
+The system automatically tracks bets that fail to place multiple times and will ignore them in future scans to avoid repeated failures. This is controlled by the `MAX_BET_FAILURES` setting in your `.env` file (default: 3).
+
+**How it works:**
+- If a bet fails to place (e.g., due to odds changes, website issues), it's logged with `not_placed` status
+- After 3 failures (or your configured threshold), that specific bet opportunity is automatically skipped
+- The system tracks each unique combination of game_id + market + outcome separately
+
+**Managing ignored bets:**
+
+```bash
+# View currently ignored bets
+./run.sh ignored
+
+# Change the threshold (in .env file)
+MAX_BET_FAILURES=5    # More tolerant - ignore after 5 failures
+MAX_BET_FAILURES=2    # Less tolerant - ignore after 2 failures
+MAX_BET_FAILURES=0    # Disable feature - never ignore failed bets
 ```
 
 ### Simple Usage Example

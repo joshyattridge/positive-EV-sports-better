@@ -24,6 +24,7 @@ if [ $# -eq 0 ]; then
     echo "  bets update           - Update bet results interactively"
     echo "  bets export           - Export bets for analysis"
     echo "  backtest              - Run historical backtest"
+    echo "  ignored               - Show bets ignored due to failures"
     echo ""
     echo "Examples:"
     echo "  ./run.sh scan"
@@ -51,6 +52,10 @@ case $COMMAND in
     backtest)
         echo "📊 Running backtest..."
         $VENV_PYTHON -m src.utils.backtest "$@"
+        ;;
+    ignored)
+        echo "🚫 Showing ignored bets..."
+        $VENV_PYTHON scripts/show_ignored_bets.py "$@"
         ;;
     *)
         echo "❌ Unknown command: $COMMAND"

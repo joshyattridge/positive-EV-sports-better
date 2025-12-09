@@ -350,3 +350,90 @@ class TestPrintSummary:
         captured = capsys.readouterr()
         assert 'BET HISTORY SUMMARY' in captured.out
         assert 'Total Bets Logged: 1' in captured.out
+
+
+class TestFailedBetOpportunities:
+    """Test get_failed_bet_opportunities functionality"""
+    
+    def test_get_failed_bet_opportunities_empty(self, bet_logger):
+        """Test with no failed bets"""
+        failed = bet_logger.get_failed_bet_opportunities(max_failures=3)
+        assert len(failed) == 0
+    
+    def test_get_failed_bet_opportunities_single_failure(self, bet_logger, sample_opportunity):
+        """Test with single failure - should not be ignored"""
+        # Log a failed bet
+        bet_logger.log_bet(sample_opportunity, bet_placed=False, notes="Odds too bad")
+        
+        failed = bet_logger.get_failed_bet_opportunities(max_failures=3)
+        assert len(failed) == 0  # Not enough failures
+    
+    def test_get_failed_bet_opportunities_multiple_failures(self, bet_logger, sample_opportunity):
+        """Test with multiple failures of same bet - should be ignored"""
+        # Log the same bet failing 3 times
+        for i in range(3):
+            bet_logger.log_bet(sample_opportunity, bet_placed=False, notes=f"Failure {i+1}")
+        
+        failed = bet_logger.get_failed_bet_opportunities(max_failures=3)
+        assert len(failed) == 1
+        
+        # Check the tuple structure
+        expected_key = (sample_opportunity['game_id'], sample_opportunity['market'], sample_opportunity['outcome'])
+        assert expected_key in failed
+    
+    def test_get_failed_bet_opportunities_different_outcomes(self, bet_logger, sample_opportunity):
+        """Test that different outcomes are tracked separately"""
+        # Fail the same game/market but different outcomes
+        opp1 = sample_opportunity.copy()
+        opp1['outcome'] = 'Arsenal'
+        
+        opp2 = sample_opportunity.copy()
+        opp2['outcome'] = 'Manchester United'
+        
+        # Fail opp1 three times
+        for i in range(3):
+            bet_logger.log_bet(opp1, bet_placed=False, notes=f"Failure {i+1}")
+        
+        # Fail opp2 twice
+        for i in range(2):
+            bet_logger.log_bet(opp2, bet_placed=False, notes=f"Failure {i+1}")
+        
+        failed = bet_logger.get_failed_bet_opportunities(max_failures=3)
+        
+        # Only opp1 should be in failed list
+        assert len(failed) == 1
+        expected_key = (opp1['game_id'], opp1['market'], opp1['outcome'])
+        assert expected_key in failed
+    
+    def test_get_failed_bet_opportunities_mixed_results(self, bet_logger, sample_opportunity):
+        """Test that successful bets don't count towards failures"""
+        # Log 2 failures
+        for i in range(2):
+            bet_logger.log_bet(sample_opportunity, bet_placed=False, notes=f"Failure {i+1}")
+        
+        # Log 1 success
+        bet_logger.log_bet(sample_opportunity, bet_placed=True, notes="Success")
+        
+        # Log 1 more failure
+        bet_logger.log_bet(sample_opportunity, bet_placed=False, notes="Failure 3")
+        
+        failed = bet_logger.get_failed_bet_opportunities(max_failures=3)
+        
+        # Total of 3 failures, should be ignored
+        assert len(failed) == 1
+        expected_key = (sample_opportunity['game_id'], sample_opportunity['market'], sample_opportunity['outcome'])
+        assert expected_key in failed
+    
+    def test_get_failed_bet_opportunities_custom_threshold(self, bet_logger, sample_opportunity):
+        """Test with custom failure threshold"""
+        # Log 2 failures
+        for i in range(2):
+            bet_logger.log_bet(sample_opportunity, bet_placed=False, notes=f"Failure {i+1}")
+        
+        # With threshold of 2, should be ignored
+        failed = bet_logger.get_failed_bet_opportunities(max_failures=2)
+        assert len(failed) == 1
+        
+        # With threshold of 3, should not be ignored
+        failed = bet_logger.get_failed_bet_opportunities(max_failures=3)
+        assert len(failed) == 0
