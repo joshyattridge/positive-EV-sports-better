@@ -14,6 +14,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.utils.bet_logger import BetLogger
+
 
 @pytest.fixture(autouse=True)
 def reset_environment():
@@ -141,3 +143,21 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "slow: mark test as slow running"
     )
+
+
+@pytest.fixture
+def bet_logger():
+    """
+    Provide a BetLogger instance configured for testing.
+    Uses test_mode=True to write to a separate test file instead of the main bet history.
+    """
+    logger = BetLogger(test_mode=True)
+    # Clean up test file before test
+    if logger.log_path.exists():
+        logger.log_path.unlink()
+    # Recreate the test file with headers
+    logger._ensure_csv_exists()
+    yield logger
+    # Clean up test file after test
+    if logger.log_path.exists():
+        logger.log_path.unlink()

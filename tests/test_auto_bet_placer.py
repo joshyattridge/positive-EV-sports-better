@@ -20,7 +20,7 @@ def auto_bet_placer():
     }, clear=True):
         with patch('scripts.auto_bet_placer.BrowserAutomation'), \
              patch('scripts.auto_bet_placer.Anthropic'):
-            return AutoBetPlacer(headless=True)
+            return AutoBetPlacer(headless=True, test_mode=True)
 
 
 class TestAutoBetPlacerInitialization:
@@ -51,7 +51,7 @@ class TestValidateBookmakerCredentials:
             with patch('scripts.auto_bet_placer.BrowserAutomation'), \
                  patch('scripts.auto_bet_placer.Anthropic'):
                 # Should not raise an exception
-                placer = AutoBetPlacer(headless=True)
+                placer = AutoBetPlacer(headless=True, test_mode=True)
                 assert placer is not None
     
     def test_validate_credentials_missing_username(self):
@@ -68,7 +68,7 @@ class TestValidateBookmakerCredentials:
             with patch('scripts.auto_bet_placer.BrowserAutomation'), \
                  patch('scripts.auto_bet_placer.Anthropic'):
                 with pytest.raises(ValueError, match='Missing credentials for bookmaker'):
-                    AutoBetPlacer(headless=True)
+                    AutoBetPlacer(headless=True, test_mode=True)
     
     def test_validate_credentials_missing_password(self):
         """Test validation fails when password is missing"""
@@ -84,7 +84,7 @@ class TestValidateBookmakerCredentials:
             with patch('scripts.auto_bet_placer.BrowserAutomation'), \
                  patch('scripts.auto_bet_placer.Anthropic'):
                 with pytest.raises(ValueError, match='Missing credentials for bookmaker'):
-                    AutoBetPlacer(headless=True)
+                    AutoBetPlacer(headless=True, test_mode=True)
     
     def test_validate_credentials_multiple_missing(self):
         """Test validation reports all missing bookmakers"""
@@ -99,7 +99,7 @@ class TestValidateBookmakerCredentials:
             with patch('scripts.auto_bet_placer.BrowserAutomation'), \
                  patch('scripts.auto_bet_placer.Anthropic'):
                 with pytest.raises(ValueError) as exc_info:
-                    AutoBetPlacer(headless=True)
+                    AutoBetPlacer(headless=True, test_mode=True)
                 
                 error_msg = str(exc_info.value)
                 assert 'williamhill' in error_msg
@@ -115,7 +115,7 @@ class TestValidateBookmakerCredentials:
             with patch('scripts.auto_bet_placer.BrowserAutomation'), \
                  patch('scripts.auto_bet_placer.Anthropic'):
                 # Should not raise an exception
-                placer = AutoBetPlacer(headless=True)
+                placer = AutoBetPlacer(headless=True, test_mode=True)
                 assert placer is not None
 
 
@@ -407,7 +407,7 @@ class TestEdgeCases:
         }, clear=True):
             with patch('scripts.auto_bet_placer.BrowserAutomation') as mock_browser, \
                  patch('scripts.auto_bet_placer.Anthropic'):
-                placer = AutoBetPlacer(headless=True)
+                placer = AutoBetPlacer(headless=True, test_mode=True)
                 mock_browser.assert_called_once_with(headless=True)
     
     def test_initialization_non_headless_mode(self):
@@ -419,5 +419,5 @@ class TestEdgeCases:
         }, clear=True):
             with patch('scripts.auto_bet_placer.BrowserAutomation') as mock_browser, \
                  patch('scripts.auto_bet_placer.Anthropic'):
-                placer = AutoBetPlacer(headless=False)
+                placer = AutoBetPlacer(headless=False, test_mode=True)
                 mock_browser.assert_called_once_with(headless=False)

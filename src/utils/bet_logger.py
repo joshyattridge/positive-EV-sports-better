@@ -57,14 +57,20 @@ class BetLogger:
         'notes'  # Empty - for any additional notes
     ]
     
-    def __init__(self, log_path: str = "data/bet_history.csv"):
+    def __init__(self, log_path: str = "data/bet_history.csv", test_mode: bool = False):
         """
         Initialize the bet logger.
         
         Args:
             log_path: Path to save bet logs (CSV file)
+            test_mode: If True, logs to a test file instead of the main bet history
         """
+        if test_mode:
+            # When in test mode, use a separate test bet history file
+            log_path = "data/test_bet_history.csv"
+        
         self.log_path = Path(log_path)
+        self.test_mode = test_mode
         self._ensure_csv_exists()
     
     def _ensure_csv_exists(self):

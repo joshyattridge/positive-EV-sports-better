@@ -32,17 +32,18 @@ class AutoBetPlacer:
     and places the bet automatically.
     """
     
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, test_mode: bool = False):
         """
         Initialize the auto bet placer.
         
         Args:
             headless: Whether to run browser in headless mode
+            test_mode: If True, logs to test file instead of main bet history
         """
         self.scanner = PositiveEVScanner()
         self.automation = BrowserAutomation(headless=headless)
         self.kelly = KellyCriterion()
-        self.bet_logger = BetLogger()
+        self.bet_logger = BetLogger(test_mode=test_mode)
         self.anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         
         # Validate that all bookmakers in BETTING_BOOKMAKERS have credentials
