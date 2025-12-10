@@ -52,8 +52,12 @@ class HistoricalBacktester:
         sharp_books_str = os.getenv('SHARP_BOOKS', 'pinnacle')
         self.sharp_books = [book.strip() for book in sharp_books_str.split(',')]
         
-        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', 'bet365,williamhill,paddypower,sport888')
-        self.betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
+        # Auto-detect betting bookmakers from credentials
+        from src.utils.config import BookmakerCredentials
+        self.betting_bookmakers = BookmakerCredentials.get_available_bookmakers()
+        if not self.betting_bookmakers:
+            # Fallback to defaults if no credentials found
+            self.betting_bookmakers = ['williamhill', 'paddypower', 'sport888']
         
         # One bet per game filter
         self.one_bet_per_game = os.getenv('ONE_BET_PER_GAME', 'true').lower() == 'true'

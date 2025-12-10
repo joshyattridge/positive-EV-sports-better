@@ -16,6 +16,7 @@ from src.utils.bet_logger import BetLogger
 from src.utils.bet_repository import BetRepository
 from src.utils.odds_utils import decimal_to_fractional, calculate_implied_probability, calculate_ev
 from src.utils.bookmaker_config import BookmakerURLGenerator
+from src.utils.config import BookmakerCredentials
 
 # Load environment variables from .env file
 load_dotenv()
@@ -45,9 +46,10 @@ class PositiveEVScanner:
         sharp_books_str = os.getenv('SHARP_BOOKS', 'pinnacle,betfair_ex_uk,betfair_ex_eu,betfair_ex_au,matchbook,smarkets')
         self.sharp_books = [book.strip() for book in sharp_books_str.split(',')]
         
-        # Betting bookmakers - read from env or use defaults
-        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', 'bet365,williamhill,ladbrokes_uk,coral,paddypower,skybet,betway,betvictor,unibet_uk,betfred,sport888')
-        self.betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
+        # Betting bookmakers - auto-detect from credentials
+        self.betting_bookmakers = BookmakerCredentials.get_available_bookmakers()
+        if not self.betting_bookmakers:
+            print("⚠️  Warning: No bookmaker credentials found. Please add credentials to .env file.")
         
         # Minimum EV threshold - read from env or use default
         self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.02'))

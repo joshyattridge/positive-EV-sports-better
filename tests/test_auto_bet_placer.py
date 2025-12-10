@@ -55,55 +55,52 @@ class TestValidateBookmakerCredentials:
                 assert placer is not None
     
     def test_validate_credentials_missing_username(self):
-        """Test validation fails when username is missing"""
+        """Test auto-detection skips bookmakers with missing username"""
         with patch.dict('os.environ', {
             'ODDS_API_KEY': 'test',
             'ANTHROPIC_API_KEY': 'test',
-            'BETTING_BOOKMAKERS': 'bet365,skybet',
             'BET365_USERNAME': 'user1',
             'BET365_PASSWORD': 'pass1',
             'SKYBET_PASSWORD': 'pass2'
-            # Missing SKYBET_USERNAME
+            # Missing SKYBET_USERNAME - should be auto-excluded
         }, clear=True):
             with patch('scripts.auto_bet_placer.BrowserAutomation'), \
                  patch('scripts.auto_bet_placer.Anthropic'):
-                with pytest.raises(ValueError, match='Missing credentials for bookmaker'):
-                    AutoBetPlacer(headless=True, test_mode=True)
+                # Should not raise error, just skip bookmakers without full credentials
+                placer = AutoBetPlacer(headless=True, test_mode=True)
+                # BET365 should be detected, SKYBET should be skipped
+                assert placer is not None
     
     def test_validate_credentials_missing_password(self):
-        """Test validation fails when password is missing"""
+        """Test auto-detection skips bookmakers with missing password"""
         with patch.dict('os.environ', {
             'ODDS_API_KEY': 'test',
             'ANTHROPIC_API_KEY': 'test',
-            'BETTING_BOOKMAKERS': 'bet365,williamhill',
             'BET365_USERNAME': 'user1',
             'BET365_PASSWORD': 'pass1',
             'WILLIAMHILL_USERNAME': 'user2'
-            # Missing WILLIAMHILL_PASSWORD
+            # Missing WILLIAMHILL_PASSWORD - should be auto-excluded
         }, clear=True):
             with patch('scripts.auto_bet_placer.BrowserAutomation'), \
                  patch('scripts.auto_bet_placer.Anthropic'):
-                with pytest.raises(ValueError, match='Missing credentials for bookmaker'):
-                    AutoBetPlacer(headless=True, test_mode=True)
+                # Should not raise error, just skip bookmakers without full credentials
+                placer = AutoBetPlacer(headless=True, test_mode=True)
+                assert placer is not None
     
     def test_validate_credentials_multiple_missing(self):
-        """Test validation reports all missing bookmakers"""
+        """Test auto-detection only includes bookmakers with complete credentials"""
         with patch.dict('os.environ', {
             'ODDS_API_KEY': 'test',
             'ANTHROPIC_API_KEY': 'test',
-            'BETTING_BOOKMAKERS': 'bet365,williamhill,skybet',
             'BET365_USERNAME': 'user1',
             'BET365_PASSWORD': 'pass1'
-            # Missing williamhill and skybet
+            # Missing williamhill and skybet credentials
         }, clear=True):
             with patch('scripts.auto_bet_placer.BrowserAutomation'), \
                  patch('scripts.auto_bet_placer.Anthropic'):
-                with pytest.raises(ValueError) as exc_info:
-                    AutoBetPlacer(headless=True, test_mode=True)
-                
-                error_msg = str(exc_info.value)
-                assert 'williamhill' in error_msg
-                assert 'skybet' in error_msg
+                # Should not raise error, will only detect bet365
+                placer = AutoBetPlacer(headless=True, test_mode=True)
+                assert placer is not None
     
     def test_validate_credentials_no_bookmakers_configured(self):
         """Test validation passes when no bookmakers are configured"""

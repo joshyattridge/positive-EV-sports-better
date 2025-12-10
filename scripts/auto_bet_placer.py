@@ -48,11 +48,10 @@ class AutoBetPlacer:
         self.bet_logger = BetLogger(test_mode=test_mode)
         self.anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         
-        # Validate that all bookmakers in BETTING_BOOKMAKERS have credentials
-        betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', '')
-        if betting_bookmakers_str:
-            betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
-            BookmakerCredentials.validate_bookmaker_credentials(betting_bookmakers)
+        # Get available bookmakers from credentials (no validation needed, auto-detected)
+        available_bookmakers = BookmakerCredentials.get_available_bookmakers()
+        if not available_bookmakers:
+            print("⚠️  Warning: No bookmaker credentials found. Cannot place bets.")
     
     def find_best_opportunity(self) -> Optional[Dict[str, Any]]:
         """

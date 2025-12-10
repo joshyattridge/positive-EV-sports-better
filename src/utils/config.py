@@ -47,6 +47,48 @@ class BookmakerCredentials:
         }
     
     @staticmethod
+    def get_available_bookmakers() -> List[str]:
+        """
+        Auto-detect bookmakers that have credentials configured.
+        
+        Returns:
+            List of bookmaker keys that have both username and password set
+        """
+        # List of all possible bookmakers from Odds API
+        all_bookmakers = [
+            # US Bookmakers
+            'betanysports', 'betmgm', 'betonlineag', 'betrivers', 'betus', 'bovada',
+            'draftkings', 'everygame', 'fanatics', 'fanduel', 'gtbets', 'lowvig',
+            'mybookieag', 'williamhill_us',
+            # UK Bookmakers
+            'betfair_ex_uk', 'betfair_sb_uk', 'betvictor', 'betway', 'boylesports',
+            'coral', 'grosvenor', 'ladbrokes_uk', 'livescorebet', 'paddypower',
+            'skybet', 'unibet_uk', 'virginbet', 'williamhill',
+            # EU Bookmakers
+            'betclic_fr', 'betfair_ex_eu', 'betsson', 'casumo', 'codere_it',
+            'coolbet', 'leovegas', 'leovegas_se', 'marathonbet', 'matchbook',
+            'nordicbet', 'onexbet', 'parionssport_fr', 'pinnacle', 'pmu_fr',
+            'smarkets', 'sport888', 'tipico_de', 'unibet', 'unibet_fr',
+            'unibet_nl', 'unibet_se', 'winamax_de', 'winamax_fr',
+            # AU Bookmakers
+            'betfair_ex_au', 'betr_au', 'betright', 'boombet', 'dabble_au',
+            'ladbrokes_au', 'neds', 'playup', 'pointsbetau', 'sportsbet',
+            'tab', 'tabtouch'
+        ]
+        
+        available_bookmakers = []
+        
+        for bookmaker_key in all_bookmakers:
+            env_prefix = bookmaker_key.upper()
+            username = os.getenv(f'{env_prefix}_USERNAME')
+            password = os.getenv(f'{env_prefix}_PASSWORD')
+            
+            if username and password:
+                available_bookmakers.append(bookmaker_key)
+        
+        return available_bookmakers
+    
+    @staticmethod
     def validate_bookmaker_credentials(bookmaker_keys: List[str]) -> None:
         """
         Validate that all bookmakers have credentials configured.
