@@ -410,9 +410,51 @@ Answer with ONLY one word: "YES" if the bet was successfully placed and confirme
                 result['response']
             )
             
-            # Log the bet to CSV
+            # If bet was placed successfully, validate the odds
+            validation_results = None
+            if result['success'] and bet_actually_placed:
+                # Get the first sharp book link (preferably Pinnacle)
+                sharp_links = best_opp.get('sharp_links', [])
+                if sharp_links:
+                    # Try to find Pinnacle first, otherwise use the first available
+                    sharp_url = None
+                    sharp_odds = None
+                    for sharp in sharp_links:
+                        if 'pinnacle' in sharp['name'].lower():
+                            sharp_url = sharp['link']
+                            sharp_odds = sharp['odds']
+                            break
+                    
+                    # If no Pinnacle, use first sharp book
+                    if not sharp_url and sharp_links:
+                        sharp_url = sharp_links[0]['link']
+                        sharp_odds = sharp_links[0]['odds']
+                    
+            # Log the bet to CSV FIRST
             if result['success'] and bet_actually_placed:
                 self.bet_logger.log_bet(best_opp, bet_placed=True, notes="Bet placed successfully via automation")
+                
+                # Now validate odds AFTER the bet is logged
+                if sharp_url:
+                    print("\n" + "="*80)
+                    print("🔍 VALIDATING ODDS")
+                    print("="*80 + "\n")
+                    try:
+                        validation_results = await self.automation.odds_validation(
+                            bet_id=best_opp['game_id'],
+                            bookmaker_odds=best_opp['odds'],
+                            sharp_odds=sharp_odds,
+                            sharp_url=sharp_url,
+                            game=best_opp['game'],
+                            market=best_opp['market'],
+                            outcome=best_opp['outcome']
+                        )
+                        # Store sharp_url and expected sharp odds for later display
+                        validation_results['sharp_url'] = sharp_url
+                        validation_results['expected_sharp_odds'] = sharp_odds
+                    except Exception as e:
+                        print(f"⚠️ Odds validation failed: {e}")
+                        validation_results = {'error': str(e)}
             else:
                 failure_reason = result['response']
                 self.bet_logger.log_bet(best_opp, bet_placed=False, notes=failure_reason)
@@ -421,7 +463,8 @@ Answer with ONLY one word: "YES" if the bet was successfully placed and confirme
                 'success': result['success'] and bet_actually_placed,
                 'message': result['response'],
                 'opportunity': best_opp,
-                'automation_result': result
+                'automation_result': result,
+                'validation_results': validation_results
             }
             
         except Exception as e:
@@ -496,6 +539,34 @@ async def main():
             print(f"\n🤖 Automation Stats:")
             print(f"   Iterations: {auto.get('iterations', 'N/A')}")
             print(f"   Tool calls: {len(auto.get('conversation_history', []))}")
+        
+        if 'validation_results' in result and result['validation_results']:
+            val = result['validation_results']
+            print(f"\n🔍 Odds Validation:")
+            if 'error' in val:
+                print(f"   ⚠️ Validation Error: {val['error']}")
+            else:
+                bookmaker_status = "✅" if val.get('bookmaker_correct') else "❌"
+                sharp_status = "✅" if val.get('sharp_correct') else "❌"
+                bookmaker_actual = val.get('bookmaker_actual_odds')
+                sharp_actual = val.get('sharp_actual_odds')
+                
+                print(f"   Bookmaker Odds: {bookmaker_status}")
+                if bookmaker_actual:
+                    print(f"      Expected: {opp['odds']:.2f}, Actual: {bookmaker_actual:.2f}")
+                else:
+                    print(f"      Expected: {opp['odds']:.2f}, Actual: not found")
+                    
+                print(f"   Sharp Book Odds: {sharp_status}")
+                if sharp_actual:
+                    # Get expected sharp odds from validation results
+                    expected_sharp = val.get('expected_sharp_odds')
+                    if expected_sharp:
+                        print(f"      Expected: {expected_sharp:.2f}, Actual: {sharp_actual:.2f}")
+                    else:
+                        print(f"      Actual: {sharp_actual:.2f}")
+                else:
+                    print(f"      Actual: not found")
         
     except KeyboardInterrupt:
         print("\n\n❌ Interrupted by user")

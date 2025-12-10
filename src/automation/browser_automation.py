@@ -8,13 +8,17 @@ instructions powered by Anthropic's Claude API and executed via Microsoft's Play
 import os
 import json
 import re
-from typing import Optional, Dict, Any, List
+import csv
+from typing import Optional, Dict, Any, List, Tuple
 from pathlib import Path
 from anthropic import Anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from dotenv import load_dotenv
 from src.automation.action_logger import ActionLogger
+from src.automation import playwright_manual
+import time
+import asyncio
 
 # Load environment variables from .env file
 load_dotenv()
@@ -571,6 +575,258 @@ class BrowserAutomation:
             "conversation_history": conversation_history,
             "iterations": max_iterations
         }
+    
+    async def odds_validation(self, 
+                              bet_id: str,
+                              bookmaker_odds: float,
+                              sharp_odds: float,
+                              sharp_url: str,
+                              game: str = None,
+                              market: str = None,
+                              outcome: str = None,
+                              bet_history_path: str = "data/bet_history.csv") -> Dict[str, Any]:
+        """
+        Validate betting odds by comparing bookmaker and sharp book snapshots.
+        
+        This function:
+        1. Takes a snapshot of the current bookmaker page
+        2. Navigates to the sharp book URL
+        3. Takes a snapshot of the sharp book page
+        4. Uses Claude to validate both odds are correct
+        5. Records results to bet_history.csv
+        
+        Args:
+            bet_id: Unique identifier for the bet (game_id or timestamp)
+            bookmaker_odds: Expected odds from the bookmaker
+            sharp_odds: Expected odds from the sharp book
+            sharp_url: URL to the sharp book page
+            game: Game/match description (e.g., "Arsenal @ Chelsea")
+            market: Betting market type (e.g., "h2h", "totals", "spreads")
+            outcome: What is being bet on (e.g., "Arsenal", "Over 2.5")
+            bet_history_path: Path to bet_history.csv file
+            
+        Returns:
+            Dictionary with validation results:
+            {
+                'bookmaker_correct': bool,
+                'sharp_correct': bool,
+                'bookmaker_actual_odds': float or None,
+                'sharp_actual_odds': float or None
+            }
+        """
+        if not self.session:
+            raise RuntimeError("Not connected to Playwright server. Call connect_to_playwright() first.")
+        
+        print(f"\n🔍 Starting odds validation for bet: {bet_id}")
+        
+        # Step 1: Take snapshot of bookmaker page
+        print("📸 Taking snapshot of bookmaker page...")
+        bookmaker_snapshot = await playwright_manual.snapshot(self.session)
+        bookmaker_snapshot_text = self._extract_snapshot_text(bookmaker_snapshot)
+        
+        # Step 2: Navigate to sharp book URL
+        print(f"🌐 Navigating to sharp book: {sharp_url}")
+        await playwright_manual.navigate(self.session, sharp_url)
+        
+        # Wait for page content to load (Pinnacle and other sharp books are JS-heavy)
+        print("⏳ Waiting for page content to load...")
+
+        await asyncio.sleep(3)  # Give the page time to render
+        
+        # Step 3: Take snapshot of sharp book page
+        print("📸 Taking snapshot of sharp book page...")
+        sharp_snapshot = await playwright_manual.snapshot(self.session)
+        sharp_snapshot_text = self._extract_snapshot_text(sharp_snapshot)
+        
+        if not sharp_snapshot_text or len(sharp_snapshot_text.strip()) < 50:
+            print(f"⚠️ ERROR: Sharp book page still empty after retries ({len(sharp_snapshot_text)} chars)")
+            print("   The page may require authentication or have loading issues")
+        
+        # Step 4: Use Claude to validate odds
+        print("🤖 Validating odds with Claude...")
+        
+        # Build bet context string
+        bet_context = ""
+        if game:
+            bet_context += f"\nGame: {game}"
+        if market:
+            bet_context += f"\nMarket: {market}"
+        if outcome:
+            bet_context += f"\nBetting On: {outcome}"
+        
+        validation_prompt = f"""You are extracting betting odds from two sources for a specific bet.
+
+BET DETAILS:{bet_context}
+
+BOOKMAKER PAGE:
+{bookmaker_snapshot_text}
+
+SHARP BOOK PAGE:
+{sharp_snapshot_text}
+
+Your task: Find the actual odds displayed on each page for the specified bet (game: {game or 'unknown'}, outcome: {outcome or 'unknown'}).
+
+IMPORTANT - ODDS CONVERSION:
+- Bookmaker sites may display odds in FRACTIONAL format (e.g., 1/1, 5/4, 11/10)
+- Sharp books typically use DECIMAL format (e.g., 2.00, 2.25, 2.10)
+- You MUST convert fractional odds to decimal
+- Conversion formula: decimal = (numerator/denominator) + 1
+- Examples: 1/1 = 2.00, 5/4 = 2.25, 11/10 = 2.10, 6/5 = 2.20, 1/2 = 1.50
+
+Look for:
+- The specific game/match mentioned above
+- The specific outcome/selection mentioned above  
+- The actual odds displayed for that selection on each page (may be fractional or decimal)
+- Convert fractional odds to decimal format
+
+Respond ONLY with two lines in this exact format (ALWAYS use decimal odds format):
+bookmaker_actual_odds: <decimal odds value or "not_found">
+sharp_actual_odds: <decimal odds value or "not_found">
+
+Do not include any other text or explanation."""
+
+        response = self.client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=150,
+            messages=[{"role": "user", "content": validation_prompt}]
+        )
+        
+        # Parse Claude's response
+        response_text = response.content[0].text.strip()
+        print(f"📋 LLM extracted odds:\n{response_text}")
+        
+        bookmaker_actual_odds = None
+        sharp_actual_odds = None
+        
+        for line in response_text.split('\n'):
+            line = line.strip().lower()
+            if 'bookmaker_actual_odds:' in line:
+                odds_str = line.split(':', 1)[1].strip()
+                if odds_str != 'not_found':
+                    try:
+                        bookmaker_actual_odds = float(odds_str)
+                    except ValueError:
+                        pass
+            elif 'sharp_actual_odds:' in line:
+                odds_str = line.split(':', 1)[1].strip()
+                if odds_str != 'not_found':
+                    try:
+                        sharp_actual_odds = float(odds_str)
+                    except ValueError:
+                        pass
+        
+        # Now compare in Python code (round to 2 decimal places)
+        bookmaker_correct = False
+        sharp_correct = False
+        
+        if bookmaker_actual_odds is not None:
+            bookmaker_correct = round(bookmaker_actual_odds, 2) == round(bookmaker_odds, 2)
+        
+        if sharp_actual_odds is not None:
+            sharp_correct = round(sharp_actual_odds, 2) == round(sharp_odds, 2)
+        
+        # Step 5: Record results to bet_history.csv
+        print("💾 Recording validation results to bet_history.csv...")
+        self._update_bet_history(bet_id, bookmaker_correct, sharp_correct, 
+                                bookmaker_actual_odds, sharp_actual_odds, bet_history_path)
+        
+        print(f"✅ Validation complete:")
+        print(f"   Bookmaker: {bookmaker_correct} (Expected: {bookmaker_odds}, Actual: {bookmaker_actual_odds or 'not found'})")
+        print(f"   Sharp Book: {sharp_correct} (Expected: {sharp_odds}, Actual: {sharp_actual_odds or 'not found'})")
+        
+        return {
+            'bookmaker_correct': bookmaker_correct,
+            'sharp_correct': sharp_correct,
+            'bookmaker_actual_odds': bookmaker_actual_odds,
+            'sharp_actual_odds': sharp_actual_odds
+        }
+    
+    def _extract_snapshot_text(self, snapshot_result: Any) -> str:
+        """
+        Extract text content from a snapshot result.
+        
+        Args:
+            snapshot_result: Result from browser_snapshot tool
+            
+        Returns:
+            Extracted text content as a string
+        """
+        try:
+            if hasattr(snapshot_result, 'content') and snapshot_result.content:
+                content_item = snapshot_result.content[0]
+                if hasattr(content_item, 'text'):
+                    return content_item.text
+        except Exception as e:
+            print(f"⚠️ Error extracting snapshot text: {e}")
+        
+        return str(snapshot_result)
+    
+    def _update_bet_history(self, bet_id: str, bookmaker_correct: bool, sharp_correct: bool, 
+                           bookmaker_actual_odds: float, sharp_actual_odds: float, csv_path: str) -> None:
+        """
+        Update bet_history.csv with odds validation results.
+        
+        Args:
+            bet_id: Bet identifier to update
+            bookmaker_correct: Whether bookmaker odds were correct
+            sharp_correct: Whether sharp odds were correct
+            bookmaker_actual_odds: Actual odds found on bookmaker site
+            sharp_actual_odds: Actual odds found on sharp book site
+            csv_path: Path to bet_history.csv
+        """
+        csv_file = Path(csv_path)
+        
+        if not csv_file.exists():
+            print(f"⚠️ CSV file not found: {csv_path}")
+            return
+        
+        print(f"📝 Updating bet_history.csv for bet_id: {bet_id}")
+        print(f"   File path: {csv_path}")
+        
+        # Read the CSV
+        rows = []
+        found_match = False
+        with open(csv_file, 'r', newline='') as f:
+            reader = csv.DictReader(f)
+            fieldnames = list(reader.fieldnames) if reader.fieldnames else []
+            
+            # Add new columns if they don't exist
+            new_columns = ['bookmaker_odds_validated', 'bookmaker_actual_odds', 'sharp_odds_validated', 'sharp_actual_odds']
+            for col in new_columns:
+                if col not in fieldnames:
+                    fieldnames.append(col)
+            
+            print(f"   Fieldnames: {fieldnames}")
+            
+            for row in reader:
+                # Initialize new columns if they don't exist
+                for col in new_columns:
+                    if col not in row:
+                        row[col] = ''
+                
+                # Update matching bet
+                if row.get('game_id') == bet_id:
+                    print(f"   ✓ Found matching bet by game_id: {bet_id}")
+                    row['bookmaker_odds_validated'] = str(bookmaker_correct).lower()
+                    row['bookmaker_actual_odds'] = str(bookmaker_actual_odds) if bookmaker_actual_odds is not None else ''
+                    row['sharp_odds_validated'] = str(sharp_correct).lower()
+                    row['sharp_actual_odds'] = str(sharp_actual_odds) if sharp_actual_odds is not None else ''
+                    found_match = True
+                    print(f"   Updated values: bm_validated={bookmaker_correct}, bm_actual={bookmaker_actual_odds}, sharp_validated={sharp_correct}, sharp_actual={sharp_actual_odds}")
+                
+                rows.append(row)
+        
+        if not found_match:
+            print(f"   ⚠️ No matching bet found for bet_id: {bet_id}")
+            print(f"   Available game_ids in file: {[r.get('game_id', 'N/A') for r in rows[:5]]}")
+        
+        # Write back to CSV
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        
+        print(f"✅ Updated bet_history.csv for bet: {bet_id}")
 
 
 async def main():
