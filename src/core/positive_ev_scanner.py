@@ -400,16 +400,24 @@ class PositiveEVScanner:
                             # Calculate bookmaker's implied probability
                             bookmaker_probability = self.calculate_implied_probability(bet_odds)
                             
-                            # Calculate Kelly Criterion stake
+                            # Calculate full Kelly first (without fraction) to filter bet quality
+                            kelly_stake_full = self.kelly.calculate_kelly_stake(
+                                decimal_odds=bet_odds,
+                                true_probability=true_probability,
+                                kelly_fraction=1.0  # Full Kelly for filtering
+                            )
+                            
+                            # Apply minimum Kelly percentage filter on FULL Kelly (before risk management)
+                            # kelly_percentage is 0-100, min_kelly_percentage is 0-1
+                            if kelly_stake_full['kelly_percentage'] < (self.min_kelly_percentage * 100):
+                                continue
+                            
+                            # Now calculate actual stake with Kelly fraction for risk management
                             kelly_stake = self.kelly.calculate_kelly_stake(
                                 decimal_odds=bet_odds,
                                 true_probability=true_probability,
                                 kelly_fraction=self.kelly_fraction
                             )
-                            
-                            # Apply minimum Kelly percentage filter (kelly_percentage is 0-100, min is 0-1)
-                            if kelly_stake['kelly_percentage'] < (self.min_kelly_percentage * 100):
-                                continue
                             
                             # Calculate expected profit
                             expected_profit = self.kelly.calculate_expected_profit(

@@ -291,17 +291,19 @@ class HistoricalBacktester:
                         
                         # Apply filters
                         if ev >= self.min_ev_threshold and true_probability >= self.min_true_probability:
-                            # Calculate Kelly stake
+                            # Calculate full Kelly first (without fraction) to filter bet quality
                             b = bet_odds - 1
                             p = true_probability
                             q = 1 - p
-                            kelly_pct = (b * p - q) / b
-                            kelly_pct = kelly_pct * self.kelly_fraction
-                            kelly_pct = max(0, min(kelly_pct, 0.25))
+                            full_kelly_pct = (b * p - q) / b
                             
-                            # Apply minimum Kelly percentage filter
-                            if kelly_pct < self.min_kelly_percentage:
+                            # Apply minimum Kelly percentage filter on FULL Kelly (before risk management)
+                            if full_kelly_pct < self.min_kelly_percentage:
                                 continue
+                            
+                            # Now apply Kelly fraction for actual position sizing (risk management)
+                            kelly_pct = full_kelly_pct * self.kelly_fraction
+                            kelly_pct = max(0, min(kelly_pct, 0.25))
                             
                             stake = self.current_bankroll * kelly_pct
                             expected_profit = stake * ev
