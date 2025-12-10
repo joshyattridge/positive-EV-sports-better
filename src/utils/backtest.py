@@ -132,13 +132,13 @@ class HistoricalBacktester:
         }
         
         try:
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             
-            # Check remaining quota
+            # Check remaining quota (show less frequently to reduce output)
             remaining = response.headers.get('x-requests-remaining')
-            if remaining:
-                print(f"  API Requests Remaining: {remaining}")
+            if remaining and int(remaining) % 10 == 0:
+                print(f"  📊 API Requests Remaining: {remaining}")
             
             data = response.json()
             
@@ -147,7 +147,7 @@ class HistoricalBacktester:
             
             return (data, False)
         except requests.exceptions.RequestException as e:
-            print(f"  Error fetching historical odds: {e}")
+            print(f"  ❌ Error fetching historical odds: {e}")
             return (None, False)
     
     def get_historical_scores(self, sport: str, date_from: str, date_to: str) -> Optional[List[Dict]]:
@@ -177,9 +177,14 @@ class HistoricalBacktester:
         # Fetch historical odds which include scores for completed games
         # We fetch one snapshot well after the period to ensure all games have completed
         end_date = datetime.fromisoformat(date_to)
-        snapshot_time = (end_date + timedelta(days=30)).isoformat()  # 30 days after to ensure all games are completed
+        snapshot_time = (end_date + timedelta(days=90)).isoformat()  # 90 days after to ensure all games are completed
         
-        historical_data = self.get_historical_odds(sport, snapshot_time)
+        result = self.get_historical_odds(sport, snapshot_time)
+        if not result:
+            print(f"  ⚠️  No historical data available for scores")
+            return []
+        
+        historical_data, was_cached = result
         
         if not historical_data or 'data' not in historical_data:
             print(f"  ⚠️  No historical data available for scores")
@@ -187,11 +192,14 @@ class HistoricalBacktester:
         
         # Extract scores from historical data
         scores = []
+        total_games = len(historical_data.get('data', []))
         for game in historical_data['data']:
             if game.get('completed', False) and game.get('scores'):
                 scores.append(game)
         
-        print(f"✅ Loaded {len(scores)} completed games")
+        print(f"✅ Loaded {len(scores)} completed games out of {total_games} total games")
+        if len(scores) == 0 and total_games > 0:
+            print(f"   ⚠️  Warning: Found {total_games} games but none are marked as completed")
         
         # Save to cache
         self._save_to_cache(cache_key, scores)
@@ -400,31 +408,39 @@ class HistoricalBacktester:
         bet['bankroll_after'] = self.current_bankroll
         
         self.bets_placed.append(bet)
-        self.bankroll_history.append(self.current_bankroll)
         
-        # Record timestamp for graphing - use bet placement time, not game time
-        timestamp_to_use = bet_timestamp or bet.get('commence_time')
-        if timestamp_to_use:
-            self.bankroll_timestamps.append(timestamp_to_use)
+        # Only record bankroll changes for settled bets
+        if result is not None:
+            self.bankroll_history.append(self.current_bankroll)
+            
+            # Record timestamp for graphing - use bet placement time, not game time
+            timestamp_to_use = bet_timestamp or bet.get('commence_time')
+            if timestamp_to_use:
+                self.bankroll_timestamps.append(timestamp_to_use)
     
-    def backtest(self, sport: str, start_date: str, end_date: str, 
-                 snapshot_interval_hours: int = 12) -> Dict:
+    def backtest(self, sports: List[str], start_date: str, end_date: str, 
+                 snapshot_interval_hours: int = 12, simulate_on_missing: bool = True) -> Dict:
         """
-        Run backtest over a date range.
+        Run backtest over a date range for one or more sports.
         
         Args:
-            sport: Sport key (e.g., 'soccer_epl')
+            sports: List of sport keys (e.g., ['soccer_epl', 'basketball_nba'])
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
             snapshot_interval_hours: Hours between snapshots (default 12)
+            simulate_on_missing: If True, simulate results when scores unavailable (default True)
             
         Returns:
             Backtest results
         """
+        # Support single sport string for backward compatibility
+        if isinstance(sports, str):
+            sports = [sports]
+        
         print(f"\n{'='*80}")
         print(f"HISTORICAL BACKTESTING")
         print(f"{'='*80}")
-        print(f"Sport: {sport}")
+        print(f"Sports: {', '.join(sports)}")
         print(f"Date Range: {start_date} to {end_date}")
         print(f"Initial Bankroll: £{self.initial_bankroll:.2f}")
         print(f"Kelly Fraction: {self.kelly_fraction}")
@@ -442,20 +458,30 @@ class HistoricalBacktester:
         snapshot_count = 0
         total_opportunities = 0
         
-        # Get scores for the entire period (for result determination)
+        # Get scores for all sports for the entire period (for result determination)
         print("Fetching historical scores for result verification...")
-        end_plus_buffer = (end + timedelta(days=7)).isoformat()
-        scores_list = self.get_historical_scores(sport, start_date, end_plus_buffer)
-        
-        # Pre-index scores by game matchup for O(1) lookup
+        # Use a longer buffer to ensure all games have completed
+        end_plus_buffer = (end + timedelta(days=60)).isoformat()
         scores_data = {}
-        if scores_list:
-            for game in scores_list:
-                matchup = f"{game.get('away_team', '')} @ {game.get('home_team', '')}"
-                scores_data[matchup] = game
-            print(f"✅ Loaded {len(scores_data)} completed games (indexed)\n")
+        
+        for sport in sports:
+            print(f"  Loading scores for {sport}...")
+            scores_list = self.get_historical_scores(sport, start_date, end_plus_buffer)
+            
+            if scores_list:
+                for game in scores_list:
+                    matchup = f"{game.get('away_team', '')} @ {game.get('home_team', '')}"
+                    scores_data[matchup] = game
+        
+        if scores_data:
+            print(f"✅ Loaded {len(scores_data)} completed games total (indexed)")
+            # Show a few sample matchups for debugging
+            if scores_data:
+                sample_matchups = list(scores_data.keys())[:3]
+                print(f"   Sample matchups: {sample_matchups}")
+            print()
         else:
-            print("⚠️  Warning: Could not fetch scores. Results will be simulated.\n")
+            print("⚠️  Warning: Could not fetch scores. All bets will be pending.\n")
         
         print("Scanning historical odds snapshots...\n")
         
@@ -465,59 +491,79 @@ class HistoricalBacktester:
             
             print(f"[{snapshot_count}] Snapshot: {timestamp}")
             
-            # Get historical odds
-            result = self.get_historical_odds(sport, timestamp)
-            historical_data, was_cached = result if result else (None, False)
+            # Collect opportunities from all sports for this timestamp
+            all_opportunities = []
+            any_api_calls = False
             
-            if historical_data:
-                # Find +EV opportunities
-                opportunities = self.find_positive_ev_bets(historical_data)
+            for sport in sports:
+                # Get historical odds for this sport
+                result = self.get_historical_odds(sport, timestamp)
+                historical_data, was_cached = result if result else (None, False)
                 
-                if opportunities:
-                    # Filter out games we've already bet on
-                    new_opportunities = []
-                    for opp in opportunities:
-                        if opp['game_id'] not in self.games_bet_on:
-                            new_opportunities.append(opp)
-                            self.games_bet_on.add(opp['game_id'])
+                if not was_cached:
+                    any_api_calls = True
+                
+                if historical_data:
+                    # Find +EV opportunities
+                    opportunities = self.find_positive_ev_bets(historical_data)
                     
-                    if new_opportunities:
-                        filtered_count = len(opportunities) - len(new_opportunities)
-                        print(f"  Found {len(new_opportunities)} +EV opportunities ({filtered_count} filtered - already bet)")
-                        total_opportunities += len(new_opportunities)
-                        
-                        # Batch process all bets for this snapshot
-                        import random
-                        won_count = 0
-                        lost_count = 0
-                        
-                        for opp in new_opportunities:
-                            # Determine result if available
-                            result = self.determine_bet_result(opp, scores_data)
-                            
-                            # If no result, simulate based on true probability
-                            if result is None:
-                                result = 'won' if random.random() < opp['true_probability'] else 'lost'
-                            
-                            if result == 'won':
-                                won_count += 1
-                            else:
-                                lost_count += 1
-                            
-                            self.place_bet(opp, result, bet_timestamp=timestamp)
-                        
-                        # Print batch summary
-                        print(f"    Placed {len(new_opportunities)} bets: {won_count}W-{lost_count}L | Bankroll: £{self.current_bankroll:.2f}")
-                    else:
-                        print(f"  No +EV opportunities found (all filtered - already bet)")
-                else:
-                    print(f"  No +EV opportunities found")
-            else:
-                print(f"  Failed to fetch data")
+                    # Add sport info to each opportunity
+                    for opp in opportunities:
+                        opp['sport'] = sport
+                    
+                    all_opportunities.extend(opportunities)
             
-            # Smart rate limiting - only wait if we actually made an API call
-            if historical_data and not was_cached:
-                time.sleep(0.5)
+            # Smart rate limiting - only wait if we made actual API calls
+            if any_api_calls:
+                time.sleep(0.1)  # Reduced from 0.5s for faster execution
+            
+            if all_opportunities:
+                # Filter out games we've already bet on
+                new_opportunities = []
+                for opp in all_opportunities:
+                    if opp['game_id'] not in self.games_bet_on:
+                        new_opportunities.append(opp)
+                        self.games_bet_on.add(opp['game_id'])
+                
+                if new_opportunities:
+                    filtered_count = len(all_opportunities) - len(new_opportunities)
+                    print(f"  Found {len(new_opportunities)} +EV opportunities ({filtered_count} filtered - already bet)")
+                    total_opportunities += len(new_opportunities)
+                    
+                    # Batch process all bets for this snapshot
+                    import random
+                    won_count = 0
+                    lost_count = 0
+                    pending_count = 0
+                    
+                    for opp in new_opportunities:
+                        # Determine result if available
+                        result = self.determine_bet_result(opp, scores_data)
+                        
+                        # If no result and simulation is enabled, simulate based on true probability
+                        if result is None and simulate_on_missing:
+                            result = 'won' if random.random() < opp['true_probability'] else 'lost'
+                        
+                        if result == 'won':
+                            won_count += 1
+                        elif result == 'lost':
+                            lost_count += 1
+                        else:
+                            pending_count += 1
+                        
+                        # Store when this bet was placed (discovered), not game time
+                        opp['bet_placed_at'] = timestamp
+                        self.place_bet(opp, result, bet_timestamp=timestamp)
+                    
+                    # Print batch summary
+                    if pending_count > 0:
+                        print(f"    Placed {len(new_opportunities)} bets: {won_count}W-{lost_count}L-{pending_count}P | Bankroll: £{self.current_bankroll:.2f}")
+                    else:
+                        print(f"    Placed {len(new_opportunities)} bets: {won_count}W-{lost_count}L | Bankroll: £{self.current_bankroll:.2f}")
+                else:
+                    print(f"  No +EV opportunities found (all filtered - already bet)")
+            else:
+                print(f"  No +EV opportunities found")
             
             # Move to next snapshot
             current += timedelta(hours=snapshot_interval_hours)
@@ -534,12 +580,25 @@ class HistoricalBacktester:
             print("No bets were placed during backtest.")
             return {}
         
-        total_bets = len(self.bets_placed)
-        won_bets = sum(1 for b in self.bets_placed if b.get('result') == 'won')
-        lost_bets = sum(1 for b in self.bets_placed if b.get('result') == 'lost')
+        # Filter out pending/unsettled bets
+        settled_bets = [b for b in self.bets_placed if b.get('result') is not None]
+        pending_bets = [b for b in self.bets_placed if b.get('result') is None]
         
-        total_staked = sum(b['stake'] for b in self.bets_placed)
-        total_profit = sum(b.get('actual_profit', 0) for b in self.bets_placed)
+        total_bets = len(settled_bets)
+        pending_count = len(pending_bets)
+        
+        # Check if we have any settled bets
+        if total_bets == 0:
+            print("No settled bets found during backtest.")
+            if pending_count > 0:
+                print(f"All {pending_count} bets are still pending (games haven't finished yet).")
+            return {}
+        
+        won_bets = sum(1 for b in settled_bets if b.get('result') == 'won')
+        lost_bets = sum(1 for b in settled_bets if b.get('result') == 'lost')
+        
+        total_staked = sum(b['stake'] for b in settled_bets)
+        total_profit = sum(b.get('actual_profit', 0) for b in settled_bets)
         
         final_bankroll = self.current_bankroll
         total_return = (final_bankroll - self.initial_bankroll) / self.initial_bankroll * 100
@@ -559,23 +618,25 @@ class HistoricalBacktester:
                 max_drawdown = drawdown
                 max_drawdown_pct = drawdown_pct
         
-        # Calculate actual EV stats
-        actual_evs = [b['ev'] for b in self.bets_placed]
+        # Calculate actual EV stats from settled bets only
+        actual_evs = [b['ev'] for b in settled_bets]
         avg_ev = sum(actual_evs) / len(actual_evs) if actual_evs else 0
         
-        actual_odds = [b['odds'] for b in self.bets_placed]
+        actual_odds = [b['odds'] for b in settled_bets]
         avg_odds = sum(actual_odds) / len(actual_odds) if actual_odds else 0
         
-        actual_probs = [b['true_probability'] for b in self.bets_placed]
+        actual_probs = [b['true_probability'] for b in settled_bets]
         avg_prob = sum(actual_probs) / len(actual_probs) if actual_probs else 0
         
         # Print report
         print(f"BACKTEST RESULTS")
         print(f"{'='*80}\n")
         
-        print(f"Bets Placed: {total_bets}")
+        print(f"Settled Bets: {total_bets}")
         print(f"  Won: {won_bets} ({won_bets/total_bets*100:.1f}%)")
         print(f"  Lost: {lost_bets} ({lost_bets/total_bets*100:.1f}%)")
+        if pending_count > 0:
+            print(f"  Pending (ignored): {pending_count}")
         
         print(f"\nBankroll Performance:")
         print(f"  Starting: £{self.initial_bankroll:.2f}")
@@ -596,10 +657,22 @@ class HistoricalBacktester:
         print(f"\nRisk Metrics:")
         print(f"  Max Drawdown: £{max_drawdown:.2f} ({max_drawdown_pct:.2f}%)")
         
+        # Show per-sport breakdown if multiple sports
+        sports_in_bets = set(b.get('sport') for b in settled_bets if b.get('sport'))
+        if len(sports_in_bets) > 1:
+            print(f"\nPer-Sport Breakdown:")
+            for sport in sorted(sports_in_bets):
+                sport_bets = [b for b in settled_bets if b.get('sport') == sport]
+                sport_count = len(sport_bets)
+                sport_won = sum(1 for b in sport_bets if b.get('result') == 'won')
+                sport_profit = sum(b.get('actual_profit', 0) for b in sport_bets)
+                print(f"  {sport}: {sport_count} bets, {sport_won}W-{sport_count-sport_won}L, £{sport_profit:+.2f}")
+        
         print(f"\n{'='*80}\n")
         
         return {
             'total_bets': total_bets,
+            'pending_bets': pending_count,
             'won_bets': won_bets,
             'lost_bets': lost_bets,
             'win_rate': won_bets / total_bets if total_bets > 0 else 0,
@@ -615,7 +688,8 @@ class HistoricalBacktester:
             'max_drawdown': max_drawdown,
             'max_drawdown_pct': max_drawdown_pct,
             'bankroll_history': self.bankroll_history,
-            'bets': self.bets_placed
+            'bets': settled_bets,
+            'pending_bets_list': pending_bets
         }
     
     def plot_results(self, save_path: str = 'backtest_chart.png', show_monte_carlo: bool = False):
@@ -815,13 +889,13 @@ class HistoricalBacktester:
         
         plt.close()
     
-    def monte_carlo_backtest(self, sport: str, start_date: str, end_date: str,
+    def monte_carlo_backtest(self, sports: List[str], start_date: str, end_date: str,
                             snapshot_interval_hours: int = 12, n_simulations: int = 100) -> Dict:
         """
         Run multiple Monte Carlo simulations of the backtest.
         
         Args:
-            sport: Sport key (e.g., 'soccer_epl')
+            sports: List of sport keys (e.g., ['soccer_epl', 'basketball_nba'])
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
             snapshot_interval_hours: Hours between snapshots
@@ -830,12 +904,17 @@ class HistoricalBacktester:
         Returns:
             Aggregated results across all simulations
         """
+        # Support single sport string for backward compatibility
+        if isinstance(sports, str):
+            sports = [sports]
+        
         print(f"\n{'='*80}")
         print(f"MONTE CARLO BACKTESTING - {n_simulations} SIMULATIONS")
         print(f"{'='*80}")
-        print(f"Sport: {sport}")
+        print(f"Sports: {', '.join(sports)}")
         print(f"Date Range: {start_date} to {end_date}")
         print(f"Initial Bankroll: £{self.initial_bankroll:.2f}")
+        print(f"Note: Results simulated based on true probabilities (historical scores not available)")
         print(f"{'='*80}\n")
         
         # Store all simulation results
@@ -843,17 +922,29 @@ class HistoricalBacktester:
         
         # Run first simulation to get opportunities data (fetches from API/cache)
         print(f"[Simulation 1/{n_simulations}] Running base simulation...")
-        first_result = self.backtest(sport, start_date, end_date, snapshot_interval_hours)
-        all_results.append(first_result)
+        # Note: Historical scores may not be available, so we simulate results
+        first_result = self.backtest(sports, start_date, end_date, snapshot_interval_hours, simulate_on_missing=True)
         
-        # Store the opportunities for reuse
-        base_opportunities = self.bets_placed.copy()
-        
-        if not base_opportunities:
-            print("❌ No betting opportunities found. Cannot run Monte Carlo simulation.")
+        if not first_result:
+            print("❌ Base simulation returned no results. Cannot run Monte Carlo simulation.")
             return {}
         
-        print(f"\n✅ Found {len(base_opportunities)} betting opportunities")
+        all_results.append(first_result)
+        
+        # Store ONLY the settled bets for reuse (ignore pending bets)
+        base_opportunities = [b for b in self.bets_placed if b.get('result') is not None]
+        pending_count = len([b for b in self.bets_placed if b.get('result') is None])
+        
+        if not base_opportunities:
+            print("❌ No settled betting opportunities found. Cannot run Monte Carlo simulation.")
+            if pending_count > 0:
+                print(f"   All {pending_count} bets are still pending (games haven't finished yet).")
+                print(f"   Try extending the end date or waiting for more games to complete.")
+            return {}
+        
+        print(f"\n✅ Found {len(base_opportunities)} settled betting opportunities")
+        if pending_count > 0:
+            print(f"   (Excluding {pending_count} pending bets that haven't settled)")
         print(f"Running {n_simulations - 1} additional Monte Carlo simulations...\n")
         
         # Run remaining simulations
@@ -865,7 +956,8 @@ class HistoricalBacktester:
             for opp in base_opportunities:
                 # Simulate result based on true probability
                 result = 'won' if random.random() < opp['true_probability'] else 'lost'
-                self.place_bet(opp.copy(), result, bet_timestamp=opp.get('commence_time'))
+                # Use the bet placement time, not the game commence time
+                self.place_bet(opp.copy(), result, bet_timestamp=opp.get('bet_placed_at', opp.get('commence_time')))
             
             # Store this simulation
             self.all_simulations.append({
@@ -882,10 +974,10 @@ class HistoricalBacktester:
             if sim_num % 10 == 0 or sim_num == n_simulations:
                 print(f"  Completed {sim_num}/{n_simulations} simulations...")
         
-        # Also add first simulation to all_simulations
+        # Also add first simulation to all_simulations (use bet placement timestamps)
         self.all_simulations.insert(0, {
             'history': first_result['bankroll_history'],
-            'timestamps': [bet.get('commence_time', '') for bet in base_opportunities],
+            'timestamps': [bet.get('bet_placed_at', bet.get('commence_time', '')) for bet in base_opportunities if bet.get('result') is not None],
             'final_bankroll': first_result['final_bankroll']
         })
         
@@ -978,8 +1070,8 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     parser.add_argument(
         '--sport', '-s',
         type=str,
-        default='soccer_epl',
-        help='Sport key (default: soccer_epl)'
+        default=None,
+        help='Sport key (default: from BETTING_SPORTS in .env, or soccer_epl). Use comma-separated values for multiple sports.'
     )
     
     parser.add_argument(
@@ -1019,6 +1111,17 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     
     args = parser.parse_args()
     
+    # Determine sports to backtest
+    if args.sport:
+        # Use command-line argument (can be comma-separated)
+        sports = [s.strip() for s in args.sport.split(',')]
+    else:
+        # Use BETTING_SPORTS from .env
+        betting_sports_str = os.getenv('BETTING_SPORTS', 'soccer_epl')
+        sports = [s.strip() for s in betting_sports_str.split(',')]
+    
+    print(f"🏆 Sports to backtest: {', '.join(sports)}\n")
+    
     # Validate dates
     try:
         start_date = datetime.fromisoformat(args.start).date().isoformat()
@@ -1032,12 +1135,15 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     end = datetime.fromisoformat(end_date)
     days = (end - start).days
     snapshots = int((days * 24) / args.interval)
-    cost = snapshots * 10
+    cost_per_sport = snapshots * 10
+    total_cost = cost_per_sport * len(sports)
     
     print(f"\n⚠️  ESTIMATED COST:")
     print(f"   Days: {days}")
-    print(f"   Snapshots: {snapshots}")
-    print(f"   API Credits: {cost}")
+    print(f"   Sports: {len(sports)}")
+    print(f"   Snapshots per sport: {snapshots}")
+    print(f"   Total snapshots: {snapshots * len(sports)}")
+    print(f"   API Credits: {total_cost}")
     print(f"   (Each snapshot costs 10 credits)\n")
     
     response = input("Continue with backtest? (y/n): ").lower().strip()
@@ -1045,13 +1151,13 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
         print("Backtest cancelled.")
         return
     
-    # Run backtest
+    # Run backtest with all sports together
     backtester = HistoricalBacktester()
     
     if args.monte_carlo > 0:
         # Run Monte Carlo simulation
         results = backtester.monte_carlo_backtest(
-            sport=args.sport,
+            sports=sports,
             start_date=start_date,
             end_date=end_date,
             snapshot_interval_hours=args.interval,
@@ -1059,7 +1165,7 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
         )
         
         if results:
-            # Save aggregate results
+            # Save results
             backtester.save_results(results, args.output)
             
             # Generate Monte Carlo chart
@@ -1070,7 +1176,7 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     else:
         # Run single backtest
         results = backtester.backtest(
-            sport=args.sport,
+            sports=sports,
             start_date=start_date,
             end_date=end_date,
             snapshot_interval_hours=args.interval
