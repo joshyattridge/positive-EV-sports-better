@@ -145,6 +145,15 @@ def pytest_configure(config):
     )
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """
+    Clean up test files after all tests complete.
+    """
+    test_bet_history = Path("data/test_bet_history.csv")
+    if test_bet_history.exists():
+        test_bet_history.unlink()
+
+
 @pytest.fixture
 def bet_logger():
     """
