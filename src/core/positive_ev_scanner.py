@@ -55,6 +55,9 @@ class PositiveEVScanner:
         # Minimum Kelly percentage threshold - read from env or use default (0.0 = no filter)
         self.min_kelly_percentage = float(os.getenv('MIN_KELLY_PERCENTAGE', '0.0'))
         
+        # Maximum odds threshold - read from env or use default (0.0 = no filter)
+        self.max_odds = float(os.getenv('MAX_ODDS', '0.0'))
+        
         # API regions - read from env or use default
         self.api_regions = os.getenv('API_REGIONS', 'us,uk,eu,au')
         
@@ -375,6 +378,10 @@ class PositiveEVScanner:
                         bet_odds = odds_data['odds']
                         ev = self.calculate_ev(bet_odds, true_probability)
                         
+                        # Apply max odds filter
+                        if self.max_odds > 0 and bet_odds > self.max_odds:
+                            continue
+                        
                         # Apply both EV and probability filters
                         if ev >= self.min_ev_threshold and true_probability >= self.min_true_probability:
                             # Skip opportunities that have failed multiple times
@@ -628,6 +635,8 @@ def main():
     print(f"✅ Minimum EV threshold: {scanner.min_ev_threshold * 100}%")
     if scanner.min_true_probability > 0:
         print(f"🎲 Minimum true probability: {scanner.min_true_probability * 100:.1f}%")
+    if scanner.max_odds > 0:
+        print(f"📊 Maximum odds: {scanner.max_odds:.1f}")
     print(f"💰 Bankroll: £{scanner.kelly.bankroll:.2f}")
     print(f"📐 Kelly Strategy: {scanner.kelly_fraction * 100:.0f}% Kelly ({scanner.kelly_fraction:.2f} fraction)")
     if scanner.min_kelly_percentage > 0:

@@ -461,3 +461,34 @@ class TestMinimumKellyPercentageFilter:
             # This ensures we don't get micro-bets below bookmaker minimums
             assert scanner.min_kelly_percentage == 0.015
             assert scanner.kelly.bankroll == 40.0
+
+
+class TestMaxOddsFilter:
+    """Test maximum odds filter"""
+    
+    def test_reads_max_odds_from_env(self):
+        """Test scanner reads MAX_ODDS from environment"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key',
+            'MAX_ODDS': '5.0'
+        }):
+            scanner = PositiveEVScanner()
+            assert scanner.max_odds == 5.0
+    
+    def test_defaults_to_zero_when_not_set(self):
+        """Test defaults to 0.0 (no filter) when not set"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key'
+        }, clear=True):
+            scanner = PositiveEVScanner()
+            assert scanner.max_odds == 0.0
+    
+    def test_filter_blocks_high_odds(self):
+        """Test that MAX_ODDS filter is configured correctly"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key',
+            'MAX_ODDS': '8.0'
+        }):
+            scanner = PositiveEVScanner()
+            # With max_odds=8.0, bets above 8.0 should be filtered
+            assert scanner.max_odds == 8.0

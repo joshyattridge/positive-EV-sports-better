@@ -99,6 +99,9 @@ BETTING_SPORTS=soccer_epl,soccer_spain_la_liga,soccer_germany_bundesliga
 # Minimum EV threshold (0.02 = 2%)
 MIN_EV_THRESHOLD=0.02
 
+# Maximum odds filter (5.0 = max 5x odds, set to 0.0 to disable)
+MAX_ODDS=5.0
+
 # Kelly Criterion Bankroll Management
 BANKROLL=1000          # Your total betting bankroll
 KELLY_FRACTION=0.25    # Fraction of Kelly to use (0.25 = quarter Kelly, 0.5 = half Kelly, 1.0 = full Kelly)
@@ -178,6 +181,7 @@ The project includes a convenient helper script that automatically uses the corr
 The system automatically tracks bets that fail to place multiple times and will ignore them in future scans to avoid repeated failures. This is controlled by the `MAX_BET_FAILURES` setting in your `.env` file (default: 3).
 
 **How it works:**
+
 - If a bet fails to place (e.g., due to odds changes, website issues), it's logged with `not_placed` status
 - After 3 failures (or your configured threshold), that specific bet opportunity is automatically skipped
 - The system tracks each unique combination of game_id + market + outcome separately

@@ -45,6 +45,7 @@ class HistoricalBacktester:
         self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.03'))
         self.min_true_probability = float(os.getenv('MIN_TRUE_PROBABILITY', '0.40'))
         self.min_kelly_percentage = float(os.getenv('MIN_KELLY_PERCENTAGE', '0.0'))
+        self.max_odds = float(os.getenv('MAX_ODDS', '0.0'))
         
         # Sharp and betting bookmakers
         sharp_books_str = os.getenv('SHARP_BOOKS', 'pinnacle')
@@ -284,6 +285,10 @@ class HistoricalBacktester:
                         bet_odds = odds_data['odds']
                         ev = self.calculate_ev(bet_odds, true_probability)
                         
+                        # Apply max odds filter
+                        if self.max_odds > 0 and bet_odds > self.max_odds:
+                            continue
+                        
                         # Apply filters
                         if ev >= self.min_ev_threshold and true_probability >= self.min_true_probability:
                             # Calculate Kelly stake
@@ -453,6 +458,8 @@ class HistoricalBacktester:
         print(f"Min True Probability: {self.min_true_probability*100:.1f}%")
         if self.min_kelly_percentage > 0:
             print(f"Min Kelly Percentage: {self.min_kelly_percentage*100:.1f}%")
+        if self.max_odds > 0:
+            print(f"Max Odds: {self.max_odds:.1f}")
         print(f"Sharp Books: {', '.join(self.sharp_books)}")
         print(f"Betting Bookmakers: {', '.join(self.betting_bookmakers)}")
         print(f"{'='*80}\n")
@@ -926,6 +933,8 @@ class HistoricalBacktester:
         print(f"Min True Probability: {self.min_true_probability*100:.1f}%")
         if self.min_kelly_percentage > 0:
             print(f"Min Kelly Percentage: {self.min_kelly_percentage*100:.1f}%")
+        if self.max_odds > 0:
+            print(f"Max Odds: {self.max_odds:.1f}")
         print(f"Note: Results simulated based on true probabilities (historical scores not available)")
         print(f"{'='*80}\n")
         
