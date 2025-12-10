@@ -19,12 +19,13 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils.bet_logger import BetLogger
+from src.utils.bet_repository import BetRepository
 
 
 def view_summary():
     """Display summary of all bets."""
-    logger = BetLogger()
-    logger.print_summary()
+    repository = BetRepository()
+    repository.print_summary()
 
 
 def list_pending_bets():

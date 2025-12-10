@@ -124,27 +124,30 @@ class TestGetBookmakerCredentials:
     
     def test_get_credentials_success(self, auto_bet_placer):
         """Test successful credential retrieval"""
+        from src.utils.config import BookmakerCredentials
         with patch.dict('os.environ', {
             'BET365_USERNAME': 'testuser',
             'BET365_PASSWORD': 'testpass'
         }):
-            credentials = auto_bet_placer.get_bookmaker_credentials('bet365')
+            credentials = BookmakerCredentials.get_credentials('bet365')
             
             assert credentials['username'] == 'testuser'
             assert credentials['password'] == 'testpass'
     
     def test_get_credentials_missing(self, auto_bet_placer):
         """Test credential retrieval fails when missing"""
+        from src.utils.config import BookmakerCredentials
         with pytest.raises(ValueError, match='Credentials not found'):
-            auto_bet_placer.get_bookmaker_credentials('unknownbookie')
+            BookmakerCredentials.get_credentials('unknownbookie')
     
     def test_get_credentials_case_insensitive(self, auto_bet_placer):
         """Test credentials work with different cases"""
+        from src.utils.config import BookmakerCredentials
         with patch.dict('os.environ', {
             'BET365_USERNAME': 'testuser',
             'BET365_PASSWORD': 'testpass'
         }):
-            credentials = auto_bet_placer.get_bookmaker_credentials('BET365')
+            credentials = BookmakerCredentials.get_credentials('BET365')
             
             assert credentials['username'] == 'testuser'
             assert credentials['password'] == 'testpass'
@@ -203,7 +206,8 @@ class TestDescribeBet:
     
     def test_describe_bet_h2h_home(self, auto_bet_placer):
         """Test h2h bet description for home team"""
-        description = auto_bet_placer._describe_bet(
+        from src.automation.prompt_generator import BetPlacementPromptGenerator
+        description = BetPlacementPromptGenerator._describe_bet(
             'h2h',
             'Arsenal',
             'Chelsea',
@@ -215,7 +219,8 @@ class TestDescribeBet:
     
     def test_describe_bet_h2h_away(self, auto_bet_placer):
         """Test h2h bet description for away team"""
-        description = auto_bet_placer._describe_bet(
+        from src.automation.prompt_generator import BetPlacementPromptGenerator
+        description = BetPlacementPromptGenerator._describe_bet(
             'h2h',
             'Chelsea',
             'Chelsea',
@@ -227,7 +232,8 @@ class TestDescribeBet:
     
     def test_describe_bet_h2h_draw(self, auto_bet_placer):
         """Test h2h bet description for draw"""
-        description = auto_bet_placer._describe_bet(
+        from src.automation.prompt_generator import BetPlacementPromptGenerator
+        description = BetPlacementPromptGenerator._describe_bet(
             'h2h',
             'Draw',
             'Chelsea',
@@ -238,7 +244,8 @@ class TestDescribeBet:
     
     def test_describe_bet_spreads(self, auto_bet_placer):
         """Test spreads bet description"""
-        description = auto_bet_placer._describe_bet(
+        from src.automation.prompt_generator import BetPlacementPromptGenerator
+        description = BetPlacementPromptGenerator._describe_bet(
             'spreads',
             'Arsenal (+1.5)',
             'Chelsea',
@@ -249,7 +256,8 @@ class TestDescribeBet:
     
     def test_describe_bet_totals(self, auto_bet_placer):
         """Test totals bet description"""
-        description = auto_bet_placer._describe_bet(
+        from src.automation.prompt_generator import BetPlacementPromptGenerator
+        description = BetPlacementPromptGenerator._describe_bet(
             'totals',
             'Over (2.5)',
             'Chelsea',
@@ -264,6 +272,7 @@ class TestGenerateBetPrompt:
     
     def test_generate_bet_prompt(self, auto_bet_placer):
         """Test prompt generation"""
+        from src.automation.prompt_generator import BetPlacementPromptGenerator
         opportunity = {
             'bookmaker': 'Bet365',
             'bookmaker_key': 'bet365',
@@ -280,7 +289,7 @@ class TestGenerateBetPrompt:
             'password': 'testpass'
         }
         
-        prompt = auto_bet_placer.generate_bet_prompt(opportunity, credentials)
+        prompt = BetPlacementPromptGenerator.generate_bet_prompt(opportunity, credentials)
         
         assert 'Bet365' in prompt
         assert 'Arsenal' in prompt
@@ -289,6 +298,7 @@ class TestGenerateBetPrompt:
     
     def test_generate_bet_prompt_includes_credentials(self, auto_bet_placer):
         """Test prompt includes credentials"""
+        from src.automation.prompt_generator import BetPlacementPromptGenerator
         opportunity = {
             'bookmaker': 'Bet365',
             'bookmaker_key': 'bet365',
@@ -305,7 +315,7 @@ class TestGenerateBetPrompt:
             'password': 'mypass'
         }
         
-        prompt = auto_bet_placer.generate_bet_prompt(opportunity, credentials)
+        prompt = BetPlacementPromptGenerator.generate_bet_prompt(opportunity, credentials)
         
         assert 'myuser' in prompt
         assert 'mypass' in prompt
@@ -375,6 +385,8 @@ class TestPlaceBestBet:
     @pytest.mark.asyncio
     async def test_place_best_bet_dry_run(self, auto_bet_placer):
         """Test dry run mode"""
+        from src.utils.config import BookmakerCredentials
+        from src.automation.prompt_generator import BetPlacementPromptGenerator
         opportunity = {
             'bookmaker_key': 'bet365',
             'bookmaker': 'Bet365',
@@ -387,8 +399,8 @@ class TestPlaceBestBet:
         }
         
         with patch.object(auto_bet_placer, 'find_best_opportunity', return_value=opportunity):
-            with patch.object(auto_bet_placer, 'get_bookmaker_credentials', return_value={'username': 'test', 'password': 'test'}):
-                with patch.object(auto_bet_placer, 'generate_bet_prompt', return_value='Test prompt'):
+            with patch.object(BookmakerCredentials, 'get_credentials', return_value={'username': 'test', 'password': 'test'}):
+                with patch.object(BetPlacementPromptGenerator, 'generate_bet_prompt', return_value='Test prompt'):
                     result = await auto_bet_placer.place_best_bet(dry_run=True)
                     
                     assert result['success'] is True

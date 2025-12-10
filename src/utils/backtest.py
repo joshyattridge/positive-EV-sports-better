@@ -16,6 +16,7 @@ import time
 import hashlib
 from pathlib import Path
 from src.core.kelly_criterion import KellyCriterion
+from src.utils.odds_utils import calculate_implied_probability, calculate_ev
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
@@ -208,13 +209,14 @@ class HistoricalBacktester:
         
         return scores
     
+    # Backward compatibility: delegate to utility functions
     def calculate_implied_probability(self, decimal_odds: float) -> float:
-        """Calculate implied probability from decimal odds."""
-        return 1 / decimal_odds
+        """Calculate implied probability from decimal odds (delegates to odds_utils)."""
+        return calculate_implied_probability(decimal_odds)
     
     def calculate_ev(self, bet_odds: float, true_probability: float) -> float:
-        """Calculate expected value."""
-        return (true_probability * (bet_odds - 1)) - (1 - true_probability)
+        """Calculate expected value (delegates to odds_utils)."""
+        return calculate_ev(bet_odds, true_probability)
     
     def find_positive_ev_bets(self, historical_data: Dict) -> List[Dict]:
         """
@@ -272,7 +274,7 @@ class HistoricalBacktester:
                         continue
                     
                     sharp_avg = sum(sharp_odds) / len(sharp_odds)
-                    true_probability = self.calculate_implied_probability(sharp_avg)
+                    true_probability = calculate_implied_probability(sharp_avg)
                     
                     # Check betting bookmakers
                     for odds_data in odds_list:
@@ -283,7 +285,7 @@ class HistoricalBacktester:
                             continue
                         
                         bet_odds = odds_data['odds']
-                        ev = self.calculate_ev(bet_odds, true_probability)
+                        ev = calculate_ev(bet_odds, true_probability)
                         
                         # Apply max odds filter
                         if self.max_odds > 0 and bet_odds > self.max_odds:

@@ -13,6 +13,9 @@ import os
 from dotenv import load_dotenv
 from src.core.kelly_criterion import KellyCriterion
 from src.utils.bet_logger import BetLogger
+from src.utils.bet_repository import BetRepository
+from src.utils.odds_utils import decimal_to_fractional, calculate_implied_probability, calculate_ev
+from src.utils.bookmaker_config import BookmakerURLGenerator
 
 # Load environment variables from .env file
 load_dotenv()
@@ -73,8 +76,9 @@ class PositiveEVScanner:
         # Initialize Kelly Criterion calculator
         self.kelly = KellyCriterion()
         
-        # Initialize bet logger
+        # Initialize bet logger and repository
         self.bet_logger = BetLogger()
+        self.bet_repository = BetRepository()
         
         # Sorting configuration - read from env or use defaults
         self.order_by = os.getenv('ORDER_BY', 'expected_profit').lower()
@@ -140,105 +144,22 @@ class PositiveEVScanner:
             print(f"Error fetching odds for {sport}: {e}")
             return []
     
+    # Backward compatibility: delegate to utility functions
     def calculate_implied_probability(self, decimal_odds: float) -> float:
-        """
-        Calculate implied probability from decimal odds.
-        
-        Args:
-            decimal_odds: Odds in decimal format
-            
-        Returns:
-            Implied probability (0 to 1)
-        """
-        return 1 / decimal_odds
+        """Calculate implied probability from decimal odds (delegates to odds_utils)."""
+        return calculate_implied_probability(decimal_odds)
     
     def decimal_to_fractional(self, decimal_odds: float) -> str:
-        """
-        Convert decimal odds to fractional format.
-        
-        Args:
-            decimal_odds: Odds in decimal format (e.g., 3.50)
-            
-        Returns:
-            Fractional odds as string (e.g., "5/2")
-        """
-        from fractions import Fraction
-        
-        # Subtract 1 to get the profit ratio
-        profit_ratio = decimal_odds - 1
-        
-        # Convert to fraction and simplify
-        frac = Fraction(profit_ratio).limit_denominator(100)
-        
-        return f"{frac.numerator}/{frac.denominator}"
+        """Convert decimal odds to fractional (delegates to odds_utils)."""
+        return decimal_to_fractional(decimal_odds)
     
     def calculate_ev(self, bet_odds: float, true_probability: float) -> float:
-        """
-        Calculate expected value of a bet.
-        
-        Args:
-            bet_odds: The odds being offered (decimal)
-            true_probability: Estimated true probability of outcome
-            
-        Returns:
-            Expected value as percentage (0.05 = 5% EV)
-        """
-        return (true_probability * (bet_odds - 1)) - (1 - true_probability)
+        """Calculate expected value (delegates to odds_utils)."""
+        return calculate_ev(bet_odds, true_probability)
     
     def generate_bookmaker_link(self, bookmaker_key: str, sport: str, home_team: str, away_team: str) -> str:
-        """
-        Generate a search link for the specific game on the bookmaker's site.
-        Since exact match URLs require game IDs that aren't provided by the API,
-        we create a search query that will take you directly to the match.
-        
-        Args:
-            bookmaker_key: The bookmaker identifier
-            sport: Sport key
-            home_team: Home team name
-            away_team: Away team name
-            
-        Returns:
-            Search URL for the specific game
-        """
-        import urllib.parse
-        
-        # Clean up team names for search
-        search_query = f"{away_team} {home_team}".replace(" @ ", " ")
-        encoded_query = urllib.parse.quote(search_query)
-        
-        # Bookmaker search URLs (these will search within the bookmaker's site)
-        search_urls = {
-            'williamhill': f'https://sports.williamhill.com/betting/en-gb/football?q={encoded_query}',
-            'ladbrokes_uk': f'https://sports.ladbrokes.com/en-gb/betting/football?q={encoded_query}',
-            'coral': f'https://sports.coral.co.uk/en-gb/betting/football?q={encoded_query}',
-            'paddypower': f'https://www.paddypower.com/football?q={encoded_query}',
-            'skybet': f'https://m.skybet.com/football?search={encoded_query}',
-            'betway': f'https://betway.com/en-gb/sports/evt/{encoded_query}',
-            'betvictor': f'https://www.betvictor.com/en-gb/sports/football?q={encoded_query}',
-            'unibet_uk': f'https://www.unibet.co.uk/betting/sports/filter/all/all/all?search={encoded_query}',
-            'betfred': f'https://www.betfred.com/sport/football?q={encoded_query}',
-            'sport888': f'https://www.888sport.com/football?q={encoded_query}'
-        }
-        
-        # If bookmaker has a search URL, use it, otherwise create a Google search
-        if bookmaker_key in search_urls:
-            return search_urls[bookmaker_key]
-        else:
-            # Fallback: Google search for the game on that bookmaker's site
-            site_domains = {
-                'williamhill': 'sports.williamhill.com',
-                'ladbrokes_uk': 'sports.ladbrokes.com',
-                'coral': 'sports.coral.co.uk',
-                'paddypower': 'paddypower.com',
-                'skybet': 'skybet.com',
-                'betway': 'betway.com',
-                'betvictor': 'betvictor.com',
-                'unibet_uk': 'unibet.co.uk',
-                'betfred': 'betfred.com',
-                'sport888': '888sport.com'
-            }
-            domain = site_domains.get(bookmaker_key, bookmaker_key)
-            return f'https://www.google.com/search?q={encoded_query}+site:{domain}'
+        """Generate bookmaker link (delegates to BookmakerURLGenerator)."""
+        return BookmakerURLGenerator.generate_bookmaker_link(bookmaker_key, sport, home_team, away_team)
     
     def get_sharp_average(self, outcomes: List[Dict], outcome_name: str) -> Optional[float]:
         """
@@ -290,14 +211,14 @@ class PositiveEVScanner:
         # Get already-bet game IDs if filtering is enabled
         already_bet_game_ids: Set[str] = set()
         if self.skip_already_bet_games:
-            already_bet_game_ids = self.bet_logger.get_already_bet_game_ids()
+            already_bet_game_ids = self.bet_repository.get_already_bet_game_ids()
             if already_bet_game_ids:
                 print(f"🚫 Filtering out {len(already_bet_game_ids)} games with existing bets")
         
         # Get failed bet opportunities to ignore (if max_failures > 0)
         failed_opportunities = set()
         if self.max_bet_failures > 0:
-            failed_opportunities = self.bet_logger.get_failed_bet_opportunities(max_failures=self.max_bet_failures)
+            failed_opportunities = self.bet_repository.get_failed_bet_opportunities(max_failures=self.max_bet_failures)
         
         for game in games:
             # Get game ID from API
@@ -364,7 +285,7 @@ class PositiveEVScanner:
                         continue
                     
                     sharp_avg = sum(sharp_odds) / len(sharp_odds)
-                    true_probability = self.calculate_implied_probability(sharp_avg)
+                    true_probability = calculate_implied_probability(sharp_avg)
                     
                     # Check each bookmaker's odds
                     for odds_data in odds_list:
@@ -376,7 +297,7 @@ class PositiveEVScanner:
                             continue
                         
                         bet_odds = odds_data['odds']
-                        ev = self.calculate_ev(bet_odds, true_probability)
+                        ev = calculate_ev(bet_odds, true_probability)
                         
                         # Apply max odds filter
                         if self.max_odds > 0 and bet_odds > self.max_odds:
@@ -390,7 +311,7 @@ class PositiveEVScanner:
                                 continue
                             
                             # Get bookmaker link from API if available, otherwise generate one
-                            bookmaker_url = odds_data.get('link') or self.generate_bookmaker_link(
+                            bookmaker_url = odds_data.get('link') or BookmakerURLGenerator.generate_bookmaker_link(
                                 odds_data['bookmaker'],
                                 sport,
                                 home_team,
@@ -398,7 +319,7 @@ class PositiveEVScanner:
                             )
                             
                             # Calculate bookmaker's implied probability
-                            bookmaker_probability = self.calculate_implied_probability(bet_odds)
+                            bookmaker_probability = calculate_implied_probability(bet_odds)
                             
                             # Calculate full Kelly first (without fraction) to filter bet quality
                             kelly_stake_full = self.kelly.calculate_kelly_stake(
@@ -592,8 +513,8 @@ class PositiveEVScanner:
             
             for i, opp in enumerate(opps, 1):
                 # Convert odds to fractional
-                frac_odds = self.decimal_to_fractional(opp['odds'])
-                frac_sharp = self.decimal_to_fractional(opp['sharp_avg_odds'])
+                frac_odds = decimal_to_fractional(opp['odds'])
+                frac_sharp = decimal_to_fractional(opp['sharp_avg_odds'])
                 
                 # Get Kelly stake info
                 kelly_info = opp['kelly_stake']
@@ -620,7 +541,7 @@ class PositiveEVScanner:
                     print(f"   ")
                     print(f"   📊 VERIFY WITH SHARP BOOKS:")
                     for sharp in opp['sharp_links']:
-                        sharp_frac = self.decimal_to_fractional(sharp['odds'])
+                        sharp_frac = decimal_to_fractional(sharp['odds'])
                         print(f"      • {sharp['name']}: {sharp['odds']:.2f} ({sharp_frac}) - {sharp['link']}")
                 
                 print()

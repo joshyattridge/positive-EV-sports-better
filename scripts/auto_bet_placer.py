@@ -18,8 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.positive_ev_scanner import PositiveEVScanner
 from src.automation.browser_automation import BrowserAutomation
+from src.automation.prompt_generator import BetPlacementPromptGenerator
 from src.core.kelly_criterion import KellyCriterion
 from src.utils.bet_logger import BetLogger
+from src.utils.config import BookmakerCredentials
 from anthropic import Anthropic
 
 # Load environment variables
@@ -47,67 +49,10 @@ class AutoBetPlacer:
         self.anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         
         # Validate that all bookmakers in BETTING_BOOKMAKERS have credentials
-        self._validate_bookmaker_credentials()
-    
-    def _validate_bookmaker_credentials(self) -> None:
-        """
-        Validate that all bookmakers in BETTING_BOOKMAKERS have credentials configured.
-        
-        Raises:
-            ValueError: If any bookmaker is missing credentials
-        """
         betting_bookmakers_str = os.getenv('BETTING_BOOKMAKERS', '')
-        if not betting_bookmakers_str:
-            return  # No bookmakers configured
-        
-        betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
-        missing_credentials = []
-        
-        for bookmaker_key in betting_bookmakers:
-            env_prefix = bookmaker_key.upper()
-            username = os.getenv(f'{env_prefix}_USERNAME')
-            password = os.getenv(f'{env_prefix}_PASSWORD')
-            
-            if not username or not password:
-                missing_credentials.append(bookmaker_key)
-        
-        if missing_credentials:
-            error_msg = (
-                f"Missing credentials for bookmaker(s): {', '.join(missing_credentials)}\n"
-                f"Please set the following environment variables in your .env file:\n"
-            )
-            for bookmaker in missing_credentials:
-                env_prefix = bookmaker.upper()
-                error_msg += f"  - {env_prefix}_USERNAME\n"
-                error_msg += f"  - {env_prefix}_PASSWORD\n"
-            raise ValueError(error_msg)
-        
-    def get_bookmaker_credentials(self, bookmaker_key: str) -> Dict[str, str]:
-        """
-        Get username and password for a specific bookmaker from environment variables.
-        
-        Args:
-            bookmaker_key: The bookmaker key (e.g., 'bet365', 'williamhill')
-            
-        Returns:
-            Dictionary with 'username' and 'password' keys
-        """
-        # Convert bookmaker key to uppercase for env var lookup
-        env_prefix = bookmaker_key.upper()
-        
-        username = os.getenv(f'{env_prefix}_USERNAME')
-        password = os.getenv(f'{env_prefix}_PASSWORD')
-        
-        if not username or not password:
-            raise ValueError(
-                f"Credentials not found for {bookmaker_key}. "
-                f"Please set {env_prefix}_USERNAME and {env_prefix}_PASSWORD in .env file"
-            )
-        
-        return {
-            'username': username,
-            'password': password
-        }
+        if betting_bookmakers_str:
+            betting_bookmakers = [book.strip() for book in betting_bookmakers_str.split(',')]
+            BookmakerCredentials.validate_bookmaker_credentials(betting_bookmakers)
     
     def find_best_opportunity(self) -> Optional[Dict[str, Any]]:
         """
@@ -158,148 +103,6 @@ class AutoBetPlacer:
         print(f"   URL: {best_opp['bookmaker_url']}")
         
         return best_opp
-    
-    def generate_bet_prompt(self, opportunity: Dict[str, Any], credentials: Dict[str, str]) -> str:
-        """
-        Generate a detailed prompt for the browser automation to place the bet.
-        
-        Args:
-            opportunity: The betting opportunity dictionary
-            credentials: Dictionary with username and password
-            
-        Returns:
-            Detailed prompt string for browser automation
-        """
-        # Extract key information
-        bookmaker_name = opportunity['bookmaker']
-        bookmaker_url = opportunity['bookmaker_url']
-        game = opportunity['game']
-        market = opportunity['market']
-        outcome = opportunity['outcome']
-        odds = opportunity['odds']
-        stake = opportunity['kelly_stake']['recommended_stake']
-        username = credentials['username']
-        password = credentials['password']
-        
-        # Parse home and away teams
-        if '@' in game:
-            away_team, home_team = [team.strip() for team in game.split('@')]
-        else:
-            away_team = game
-            home_team = game
-        
-        # Determine what to bet on based on market and outcome
-        bet_description = self._describe_bet(market, outcome, away_team, home_team)
-        
-        # Generate the prompt
-        prompt = f"""
-🎯 AUTOMATED BET PLACEMENT TASK
-
-📊 BETTING DETAILS:
-- Bookmaker: {bookmaker_name}
-- Website: {bookmaker_url}
-- Game: {game}
-- Market: {market}
-- Selection: {bet_description}
-- Required Odds: {odds:.2f} (or better)
-- Stake Amount: £{stake:.2f}
-
-🔐 LOGIN CREDENTIALS:
-- Username: {username}
-- Password: {password}
-
-📝 STEP-BY-STEP INSTRUCTIONS:
-
-1. Navigate to: {bookmaker_url}
-
-2. If not already logged in, find and click the login button
-   - Look for "Login", "Sign In", "My Account" buttons
-   - Enter username: {username}
-   - Enter password: {password}
-   - Click submit/login button
-
-3. Search for the match: {game}
-   - Use the search function if available
-   - Or navigate through the sport sections to find the match
-   
-4. Locate the {market} market for this match
-
-5. Find and click on the selection: {outcome}
-   - Verify the odds are {odds:.2f} or better
-   - If odds are worse than {odds:.2f}, DO NOT place the bet and report the issue
-
-6. Enter stake amount: £{stake:.2f}
-   - Find the stake input field in the bet slip
-   - Clear any existing value
-   - Type exactly: {stake:.2f}
-
-7. Review the bet slip to confirm:
-   - Selection: {outcome}
-   - Odds: {odds:.2f} or better
-   - Stake: £{stake:.2f}
-   - All details match the requirements
-
-8. Place the bet
-   - Click "Place Bet" or "Confirm Bet" button
-   - Wait for confirmation
-
-9. Verify bet placement
-   - Look for confirmation message
-   - Take note of bet reference number if available
-   - Report success or any errors
-
-⚠️ IMPORTANT NOTES:
-- Only proceed if odds are {odds:.2f} or BETTER (higher decimal odds)
-- If odds have changed to worse than {odds:.2f}, STOP and report
-- Double-check all details before placing the bet
-- If you encounter any popups or cookie consent, handle them appropriately
-- If the website layout is different than expected, adapt and find the relevant elements
-- Report any errors or issues clearly
-
-ACTION_SUCCESS: place_bet_for_{opportunity['bookmaker_key']}
-"""
-        
-        return prompt
-    
-    def _describe_bet(self, market: str, outcome: str, away_team: str, home_team: str) -> str:
-        """
-        Create a human-readable description of what to bet on.
-        
-        Args:
-            market: Market type (h2h, spreads, totals)
-            outcome: The outcome name
-            away_team: Away team name
-            home_team: Home team name
-            
-        Returns:
-            Human-readable bet description
-        """
-        if market == 'h2h':
-            # Moneyline/Match Winner
-            if outcome == away_team:
-                return f"{away_team} to win"
-            elif outcome == home_team:
-                return f"{home_team} to win"
-            else:
-                return f"Draw"
-        
-        elif market == 'spreads':
-            # Point spread/handicap
-            if '(' in outcome and ')' in outcome:
-                team = outcome.split('(')[0].strip()
-                spread = outcome.split('(')[1].split(')')[0].strip()
-                return f"{team} {spread}"
-            return outcome
-        
-        elif market == 'totals':
-            # Over/Under
-            if '(' in outcome and ')' in outcome:
-                over_under = outcome.split('(')[0].strip()
-                total = outcome.split('(')[1].split(')')[0].strip()
-                return f"{over_under} {total} points"
-            return outcome
-        
-        return outcome
     
     async def _verify_bet_placement(self, conversation_history: List[Dict], final_response: str) -> bool:
         """
@@ -370,7 +173,7 @@ Answer with ONLY one word: "YES" if the bet was successfully placed and confirme
         
         # Get bookmaker credentials
         try:
-            credentials = self.get_bookmaker_credentials(best_opp['bookmaker_key'])
+            credentials = BookmakerCredentials.get_credentials(best_opp['bookmaker_key'])
         except ValueError as e:
             return {
                 'success': False,
@@ -379,7 +182,7 @@ Answer with ONLY one word: "YES" if the bet was successfully placed and confirme
             }
         
         # Generate betting prompt
-        prompt = self.generate_bet_prompt(best_opp, credentials)
+        prompt = BetPlacementPromptGenerator.generate_bet_prompt(best_opp, credentials)
         
         print("\n" + "="*80)
         print("📝 GENERATED BET PLACEMENT PROMPT")

@@ -90,15 +90,15 @@ class TestViewSummary:
     
     def test_view_summary(self, temp_bet_history, capsys):
         """Test that view_summary runs without errors"""
-        with patch('scripts.manage_bets.BetLogger') as mock_logger_class:
-            mock_logger = Mock()
-            mock_logger.log_path = Path(temp_bet_history)
-            mock_logger_class.return_value = mock_logger
+        with patch('scripts.manage_bets.BetRepository') as mock_repo_class:
+            mock_repo = Mock()
+            mock_repo.log_path = Path(temp_bet_history)
+            mock_repo_class.return_value = mock_repo
             
             view_summary()
             
             # Should call print_summary
-            mock_logger.print_summary.assert_called_once()
+            mock_repo.print_summary.assert_called_once()
 
 
 class TestListPendingBets:
