@@ -102,6 +102,7 @@ MIN_EV_THRESHOLD=0.02
 # Kelly Criterion Bankroll Management
 BANKROLL=1000          # Your total betting bankroll
 KELLY_FRACTION=0.25    # Fraction of Kelly to use (0.25 = quarter Kelly, 0.5 = half Kelly, 1.0 = full Kelly)
+MIN_KELLY_PERCENTAGE=0.02  # Minimum Kelly percentage (0.02 = 2%, filters out tiny stakes)
 
 # Failure Handling
 MAX_BET_FAILURES=3     # Skip bets that fail this many times (set to 0 to disable)
@@ -271,6 +272,7 @@ Where:
 - **Expected Profit**: Shows anticipated return per bet
 - **Dynamic Sizing**: Bets automatically scale as your bankroll grows/shrinks
 - **Risk Management**: Lower fractions = less variance, more conservative
+- **Minimum Kelly Filter**: Filter out bets with stakes too small to be practical
 
 ### Kelly Fraction Guide:
 

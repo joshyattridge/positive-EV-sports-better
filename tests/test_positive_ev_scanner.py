@@ -425,3 +425,39 @@ class TestEdgeCases:
             true_probability=0.05
         )
         assert ev > 0
+
+
+class TestMinimumKellyPercentageFilter:
+    """Test minimum Kelly percentage filter"""
+    
+    def test_reads_min_kelly_percentage_from_env(self):
+        """Test scanner reads MIN_KELLY_PERCENTAGE from environment"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key',
+            'MIN_KELLY_PERCENTAGE': '0.025'
+        }):
+            scanner = PositiveEVScanner()
+            assert scanner.min_kelly_percentage == 0.025
+    
+    def test_defaults_to_zero_when_not_set(self):
+        """Test defaults to 0.0 (no filter) when not set"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key'
+        }, clear=True):
+            scanner = PositiveEVScanner()
+            assert scanner.min_kelly_percentage == 0.0
+    
+    def test_filter_applied_in_opportunities(self):
+        """Test that opportunities below min Kelly % are filtered out"""
+        # This is an integration test that would require mocking the full API response
+        # For now, we verify the configuration is read correctly
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key',
+            'MIN_KELLY_PERCENTAGE': '0.015',
+            'BANKROLL': '40'
+        }):
+            scanner = PositiveEVScanner()
+            # With £40 bankroll and 1.5% min Kelly (0.015), minimum stake = £0.60
+            # This ensures we don't get micro-bets below bookmaker minimums
+            assert scanner.min_kelly_percentage == 0.015
+            assert scanner.kelly.bankroll == 40.0

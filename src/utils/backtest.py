@@ -44,6 +44,7 @@ class HistoricalBacktester:
         self.kelly_fraction = float(os.getenv('KELLY_FRACTION', '0.25'))
         self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.03'))
         self.min_true_probability = float(os.getenv('MIN_TRUE_PROBABILITY', '0.40'))
+        self.min_kelly_percentage = float(os.getenv('MIN_KELLY_PERCENTAGE', '0.0'))
         
         # Sharp and betting bookmakers
         sharp_books_str = os.getenv('SHARP_BOOKS', 'pinnacle')
@@ -137,7 +138,7 @@ class HistoricalBacktester:
             
             # Check remaining quota (show less frequently to reduce output)
             remaining = response.headers.get('x-requests-remaining')
-            if remaining and int(remaining) % 10 == 0:
+            if remaining and int(float(remaining)) % 10 == 0:
                 print(f"  📊 API Requests Remaining: {remaining}")
             
             data = response.json()
@@ -293,6 +294,10 @@ class HistoricalBacktester:
                             kelly_pct = kelly_pct * self.kelly_fraction
                             kelly_pct = max(0, min(kelly_pct, 0.25))
                             
+                            # Apply minimum Kelly percentage filter
+                            if kelly_pct < self.min_kelly_percentage:
+                                continue
+                            
                             stake = self.current_bankroll * kelly_pct
                             expected_profit = stake * ev
                             
@@ -446,6 +451,8 @@ class HistoricalBacktester:
         print(f"Kelly Fraction: {self.kelly_fraction}")
         print(f"Min EV: {self.min_ev_threshold*100:.1f}%")
         print(f"Min True Probability: {self.min_true_probability*100:.1f}%")
+        if self.min_kelly_percentage > 0:
+            print(f"Min Kelly Percentage: {self.min_kelly_percentage*100:.1f}%")
         print(f"Sharp Books: {', '.join(self.sharp_books)}")
         print(f"Betting Bookmakers: {', '.join(self.betting_bookmakers)}")
         print(f"{'='*80}\n")
@@ -914,6 +921,11 @@ class HistoricalBacktester:
         print(f"Sports: {', '.join(sports)}")
         print(f"Date Range: {start_date} to {end_date}")
         print(f"Initial Bankroll: £{self.initial_bankroll:.2f}")
+        print(f"Kelly Fraction: {self.kelly_fraction}")
+        print(f"Min EV: {self.min_ev_threshold*100:.1f}%")
+        print(f"Min True Probability: {self.min_true_probability*100:.1f}%")
+        if self.min_kelly_percentage > 0:
+            print(f"Min Kelly Percentage: {self.min_kelly_percentage*100:.1f}%")
         print(f"Note: Results simulated based on true probabilities (historical scores not available)")
         print(f"{'='*80}\n")
         

@@ -52,6 +52,9 @@ class PositiveEVScanner:
         # Minimum true probability threshold - read from env or use default (0.0 = no filter)
         self.min_true_probability = float(os.getenv('MIN_TRUE_PROBABILITY', '0.0'))
         
+        # Minimum Kelly percentage threshold - read from env or use default (0.0 = no filter)
+        self.min_kelly_percentage = float(os.getenv('MIN_KELLY_PERCENTAGE', '0.0'))
+        
         # API regions - read from env or use default
         self.api_regions = os.getenv('API_REGIONS', 'us,uk,eu,au')
         
@@ -397,6 +400,10 @@ class PositiveEVScanner:
                                 kelly_fraction=self.kelly_fraction
                             )
                             
+                            # Apply minimum Kelly percentage filter (kelly_percentage is 0-100, min is 0-1)
+                            if kelly_stake['kelly_percentage'] < (self.min_kelly_percentage * 100):
+                                continue
+                            
                             # Calculate expected profit
                             expected_profit = self.kelly.calculate_expected_profit(
                                 stake=kelly_stake['recommended_stake'],
@@ -623,6 +630,9 @@ def main():
         print(f"🎲 Minimum true probability: {scanner.min_true_probability * 100:.1f}%")
     print(f"💰 Bankroll: £{scanner.kelly.bankroll:.2f}")
     print(f"📐 Kelly Strategy: {scanner.kelly_fraction * 100:.0f}% Kelly ({scanner.kelly_fraction:.2f} fraction)")
+    if scanner.min_kelly_percentage > 0:
+        min_stake = scanner.kelly.bankroll * scanner.min_kelly_percentage
+        print(f"📏 Minimum Kelly filter: {scanner.min_kelly_percentage * 100:.1f}% (£{min_stake:.2f} min stake)")
     
     # Scan popular sports
     opportunities = scanner.scan_all_sports()
