@@ -34,9 +34,10 @@ class TestBacktesterInitialization:
         """Test initialization reads configuration from env"""
         assert backtester.api_key == 'test_api_key'
         assert backtester.initial_bankroll == 1000
-        assert backtester.kelly_fraction == 0.25
-        assert backtester.min_ev_threshold == 0.03
-        assert backtester.min_true_probability == 0.40
+        # These are now in the scanner
+        assert backtester.scanner.kelly_fraction == 0.25
+        assert backtester.scanner.min_ev_threshold == 0.03
+        assert backtester.scanner.min_true_probability == 0.40
     
     def test_initialization_missing_api_key(self):
         """Test initialization fails without API key"""
@@ -95,22 +96,25 @@ class TestCaching:
 
 
 class TestCalculations:
-    """Test calculation methods"""
+    """Test calculation methods (now use utility functions directly)"""
     
     def test_calculate_implied_probability(self, backtester):
         """Test implied probability calculation"""
-        prob = backtester.calculate_implied_probability(2.0)
+        from src.utils.odds_utils import calculate_implied_probability
+        prob = calculate_implied_probability(2.0)
         assert prob == pytest.approx(0.5, rel=0.001)
     
     def test_calculate_ev(self, backtester):
         """Test EV calculation"""
-        ev = backtester.calculate_ev(2.5, 0.5)
+        from src.utils.odds_utils import calculate_ev
+        ev = calculate_ev(2.5, 0.5)
         # (0.5 * 1.5) - 0.5 = 0.25
         assert ev == pytest.approx(0.25, rel=0.001)
     
     def test_calculate_ev_negative(self, backtester):
         """Test negative EV calculation"""
-        ev = backtester.calculate_ev(1.5, 0.4)
+        from src.utils.odds_utils import calculate_ev
+        ev = calculate_ev(1.5, 0.4)
         assert ev < 0
 
 
@@ -168,12 +172,12 @@ class TestFindPositiveEVBets:
     
     def test_find_positive_ev_bets_empty_data(self, backtester):
         """Test with empty data"""
-        opportunities = backtester.find_positive_ev_bets({})
+        opportunities = backtester.find_positive_ev_bets({}, 'soccer_epl')
         assert opportunities == []
     
     def test_find_positive_ev_bets_no_data_key(self, backtester):
         """Test with missing data key"""
-        opportunities = backtester.find_positive_ev_bets({'games': []})
+        opportunities = backtester.find_positive_ev_bets({'games': []}, 'soccer_epl')
         assert opportunities == []
     
     def test_find_positive_ev_bets_with_valid_data(self, backtester):
@@ -215,7 +219,7 @@ class TestFindPositiveEVBets:
             ]
         }
         
-        opportunities = backtester.find_positive_ev_bets(historical_data)
+        opportunities = backtester.find_positive_ev_bets(historical_data, 'soccer_epl')
         
         # Should find at least one opportunity
         assert isinstance(opportunities, list)
@@ -366,4 +370,4 @@ class TestEdgeCases:
             'KELLY_FRACTION': '0'
         }):
             backtester = HistoricalBacktester()
-            assert backtester.kelly_fraction == 0
+            assert backtester.scanner.kelly_fraction == 0

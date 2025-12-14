@@ -15,7 +15,7 @@ import json
 import time
 import hashlib
 from pathlib import Path
-from src.core.kelly_criterion import KellyCriterion
+from src.core.positive_ev_scanner import PositiveEVScanner
 from src.utils.odds_utils import calculate_implied_probability, calculate_ev
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -29,7 +29,7 @@ class HistoricalBacktester:
     """
     
     def __init__(self):
-        """Initialize backtester with parameters from .env."""
+        """Initialize backtester with scanner."""
         self.api_key = os.getenv('ODDS_API_KEY')
         if not self.api_key:
             raise ValueError("ODDS_API_KEY must be set in .env file")
@@ -40,29 +40,11 @@ class HistoricalBacktester:
         self.cache_dir = Path('data/backtest_cache')
         self.cache_dir.mkdir(exist_ok=True)
         
-        # Strategy parameters from .env
-        self.initial_bankroll = float(os.getenv('BANKROLL', '10'))
-        self.kelly_fraction = float(os.getenv('KELLY_FRACTION', '0.25'))
-        self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.03'))
-        self.min_true_probability = float(os.getenv('MIN_TRUE_PROBABILITY', '0.40'))
-        self.min_kelly_percentage = float(os.getenv('MIN_KELLY_PERCENTAGE', '0.0'))
-        self.max_odds = float(os.getenv('MAX_ODDS', '0.0'))
+        # Initialize scanner (reads all parameters from .env)
+        self.scanner = PositiveEVScanner(api_key=self.api_key)
         
-        # Sharp and betting bookmakers
-        sharp_books_str = os.getenv('SHARP_BOOKS', 'pinnacle')
-        self.sharp_books = [book.strip() for book in sharp_books_str.split(',')]
-        
-        # Auto-detect betting bookmakers from credentials
-        from src.utils.config import BookmakerCredentials
-        self.betting_bookmakers = BookmakerCredentials.get_available_bookmakers()
-        if not self.betting_bookmakers:
-            # Fallback to defaults if no credentials found
-            self.betting_bookmakers = ['williamhill', 'paddypower', 'sport888']
-        
-        # One bet per game filter
-        self.one_bet_per_game = os.getenv('ONE_BET_PER_GAME', 'true').lower() == 'true'
-        
-        self.kelly = KellyCriterion(self.initial_bankroll)
+        # Store initial bankroll for resets
+        self.initial_bankroll = self.scanner.kelly.bankroll
         
         # Track results
         self.bets_placed = []
@@ -81,6 +63,8 @@ class HistoricalBacktester:
         self.bankroll_timestamps = []
         self.current_bankroll = self.initial_bankroll
         self.games_bet_on = set()
+        # Reset scanner's Kelly bankroll
+        self.scanner.kelly.bankroll = self.initial_bankroll
         
     def _get_cache_key(self, sport: str, date: str, markets: str) -> str:
         """Generate a cache key for the API request."""
@@ -213,21 +197,14 @@ class HistoricalBacktester:
         
         return scores
     
-    # Backward compatibility: delegate to utility functions
-    def calculate_implied_probability(self, decimal_odds: float) -> float:
-        """Calculate implied probability from decimal odds (delegates to odds_utils)."""
-        return calculate_implied_probability(decimal_odds)
-    
-    def calculate_ev(self, bet_odds: float, true_probability: float) -> float:
-        """Calculate expected value (delegates to odds_utils)."""
-        return calculate_ev(bet_odds, true_probability)
-    
-    def find_positive_ev_bets(self, historical_data: Dict) -> List[Dict]:
+    def find_positive_ev_bets(self, historical_data: Dict, sport: str, snapshot_time: Optional[datetime] = None) -> List[Dict]:
         """
-        Analyze historical odds snapshot to find +EV bets.
+        Analyze historical odds snapshot to find +EV bets using the scanner.
         
         Args:
             historical_data: Response from historical odds API
+            sport: Sport key for context
+            snapshot_time: Time of the snapshot (for backtesting) - if None, uses current time
             
         Returns:
             List of positive EV betting opportunities
@@ -235,14 +212,39 @@ class HistoricalBacktester:
         if not historical_data or 'data' not in historical_data:
             return []
         
-        opportunities = []
+        # Temporarily disable skip_already_bet_games filter for backtesting
+        original_skip_setting = self.scanner.skip_already_bet_games
+        self.scanner.skip_already_bet_games = False
+        
+        # Update scanner's Kelly bankroll to current bankroll
+        self.scanner.kelly.bankroll = self.current_bankroll
+        
+        # Transform historical data into the format expected by scanner
+        # The scanner expects games with bookmakers array
         games = historical_data['data']
+        
+        opportunities = []
+        
+        # Get already-bet game IDs for this backtest run
+        already_bet_game_ids = self.games_bet_on
         
         for game in games:
             game_id = game.get('id', '')
+            
+            # Skip games we've already bet on in this backtest
+            if game_id and game_id in already_bet_game_ids:
+                continue
+            
+            # For backtesting: only skip games that have started relative to snapshot time
+            # For live scanning: skip games that have started relative to current time
+            commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
+            reference_time = snapshot_time if snapshot_time else datetime.now(commence_time.tzinfo)
+            if commence_time <= reference_time:
+                continue
+            
             home_team = game['home_team']
             away_team = game['away_team']
-            commence_time = game['commence_time']
+            commence_time_str = commence_time.strftime('%Y-%m-%d %H:%M %Z')
             
             bookmakers = game.get('bookmakers', [])
             if not bookmakers:
@@ -269,10 +271,10 @@ class HistoricalBacktester:
                                     'odds': outcome['price']
                                 })
                 
-                # Find +EV opportunities
+                # Analyze each outcome using scanner's logic
                 for outcome_name, odds_list in market_data.items():
                     # Get sharp book average
-                    sharp_odds = [o['odds'] for o in odds_list if o['bookmaker'] in self.sharp_books]
+                    sharp_odds = [o['odds'] for o in odds_list if o['bookmaker'] in self.scanner.sharp_books]
                     
                     if not sharp_odds:
                         continue
@@ -280,49 +282,52 @@ class HistoricalBacktester:
                     sharp_avg = sum(sharp_odds) / len(sharp_odds)
                     true_probability = calculate_implied_probability(sharp_avg)
                     
-                    # Check betting bookmakers
+                    # Check each bookmaker's odds
                     for odds_data in odds_list:
-                        if odds_data['bookmaker'] in self.sharp_books:
+                        if odds_data['bookmaker'] in self.scanner.sharp_books:
                             continue
                         
-                        if odds_data['bookmaker'] not in self.betting_bookmakers:
+                        if odds_data['bookmaker'] not in self.scanner.betting_bookmakers:
                             continue
                         
                         bet_odds = odds_data['odds']
                         ev = calculate_ev(bet_odds, true_probability)
                         
-                        # Apply max odds filter
-                        if self.max_odds > 0 and bet_odds > self.max_odds:
+                        # Apply max odds filter from scanner config
+                        if self.scanner.max_odds > 0 and bet_odds > self.scanner.max_odds:
                             continue
                         
-                        # Apply filters
-                        if ev >= self.min_ev_threshold and true_probability >= self.min_true_probability:
+                        # Apply scanner's filters
+                        if ev >= self.scanner.min_ev_threshold and true_probability >= self.scanner.min_true_probability:
                             # Calculate full Kelly first (without fraction) to filter bet quality
-                            b = bet_odds - 1
-                            p = true_probability
-                            q = 1 - p
-                            full_kelly_pct = (b * p - q) / b
-                            
-                            # Apply minimum Kelly percentage filter on FULL Kelly (before risk management)
-                            if full_kelly_pct < self.min_kelly_percentage:
-                                continue
-                            
-                            # Use Kelly Criterion class to calculate stake (includes rounding)
-                            self.kelly.bankroll = self.current_bankroll
-                            kelly_result = self.kelly.calculate_kelly_stake(
+                            kelly_stake_full = self.scanner.kelly.calculate_kelly_stake(
                                 decimal_odds=bet_odds,
                                 true_probability=true_probability,
-                                kelly_fraction=self.kelly_fraction
+                                kelly_fraction=1.0
                             )
                             
-                            stake = kelly_result['recommended_stake']
-                            kelly_pct = kelly_result['kelly_percentage'] / 100  # Convert back to decimal
-                            expected_profit = stake * ev
+                            # Apply minimum Kelly percentage filter
+                            if kelly_stake_full['kelly_percentage'] < (self.scanner.min_kelly_percentage * 100):
+                                continue
+                            
+                            # Now calculate actual stake with Kelly fraction
+                            kelly_stake = self.scanner.kelly.calculate_kelly_stake(
+                                decimal_odds=bet_odds,
+                                true_probability=true_probability,
+                                kelly_fraction=self.scanner.kelly_fraction
+                            )
+                            
+                            expected_profit = self.scanner.kelly.calculate_expected_profit(
+                                stake=kelly_stake['recommended_stake'],
+                                decimal_odds=bet_odds,
+                                true_probability=true_probability
+                            )
                             
                             opportunities.append({
                                 'game_id': game_id,
+                                'sport': sport,
                                 'game': f"{away_team} @ {home_team}",
-                                'commence_time': commence_time,
+                                'commence_time': commence_time_str,
                                 'market': market_type,
                                 'outcome': outcome_name,
                                 'bookmaker': odds_data['title'],
@@ -331,20 +336,22 @@ class HistoricalBacktester:
                                 'sharp_avg_odds': sharp_avg,
                                 'true_probability': true_probability,
                                 'ev': ev,
-                                'kelly_pct': kelly_pct,
-                                'stake': stake,
+                                'kelly_pct': kelly_stake['kelly_percentage'] / 100,
+                                'stake': kelly_stake['recommended_stake'],
                                 'expected_profit': expected_profit
                             })
         
-        # Filter to one bet per game if enabled
-        if self.one_bet_per_game and opportunities:
-            # Group by game_id and keep only the highest EV bet per game
+        # Filter to one bet per game if enabled in scanner config
+        if self.scanner.one_bet_per_game and opportunities:
             game_bets = {}
             for opp in opportunities:
                 game_id = opp['game_id']
                 if game_id not in game_bets or opp['ev'] > game_bets[game_id]['ev']:
                     game_bets[game_id] = opp
             opportunities = list(game_bets.values())
+        
+        # Restore original setting
+        self.scanner.skip_already_bet_games = original_skip_setting
         
         return opportunities
     
@@ -466,20 +473,22 @@ class HistoricalBacktester:
         print(f"Sports: {', '.join(sports)}")
         print(f"Date Range: {start_date} to {end_date}")
         print(f"Initial Bankroll: £{self.initial_bankroll:.2f}")
-        print(f"Kelly Fraction: {self.kelly_fraction}")
-        print(f"Min EV: {self.min_ev_threshold*100:.1f}%")
-        print(f"Min True Probability: {self.min_true_probability*100:.1f}%")
-        if self.min_kelly_percentage > 0:
-            print(f"Min Kelly Percentage: {self.min_kelly_percentage*100:.1f}%")
-        if self.max_odds > 0:
-            print(f"Max Odds: {self.max_odds:.1f}")
-        print(f"Sharp Books: {', '.join(self.sharp_books)}")
-        print(f"Betting Bookmakers: {', '.join(self.betting_bookmakers)}")
+        print(f"Kelly Fraction: {self.scanner.kelly_fraction}")
+        print(f"Min EV: {self.scanner.min_ev_threshold*100:.1f}%")
+        print(f"Min True Probability: {self.scanner.min_true_probability*100:.1f}%")
+        if self.scanner.min_kelly_percentage > 0:
+            print(f"Min Kelly Percentage: {self.scanner.min_kelly_percentage*100:.1f}%")
+        if self.scanner.max_odds > 0:
+            print(f"Max Odds: {self.scanner.max_odds:.1f}")
+        print(f"Sharp Books: {', '.join(self.scanner.sharp_books)}")
+        print(f"Betting Bookmakers: {', '.join(self.scanner.betting_bookmakers)}")
+        print(f"One Bet Per Game: {self.scanner.one_bet_per_game}")
         print(f"{'='*80}\n")
         
-        # Parse dates
-        start = datetime.fromisoformat(start_date)
-        end = datetime.fromisoformat(end_date)
+        # Parse dates and make them timezone-aware (UTC) for comparison with API data
+        from datetime import timezone
+        start = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+        end = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
         current = start
         
         snapshot_count = 0
@@ -531,8 +540,8 @@ class HistoricalBacktester:
                     any_api_calls = True
                 
                 if historical_data:
-                    # Find +EV opportunities
-                    opportunities = self.find_positive_ev_bets(historical_data)
+                    # Find +EV opportunities using scanner, passing snapshot time for proper filtering
+                    opportunities = self.find_positive_ev_bets(historical_data, sport, snapshot_time=current)
                     
                     # Add sport info to each opportunity
                     for opp in opportunities:
@@ -941,13 +950,16 @@ class HistoricalBacktester:
         print(f"Sports: {', '.join(sports)}")
         print(f"Date Range: {start_date} to {end_date}")
         print(f"Initial Bankroll: £{self.initial_bankroll:.2f}")
-        print(f"Kelly Fraction: {self.kelly_fraction}")
-        print(f"Min EV: {self.min_ev_threshold*100:.1f}%")
-        print(f"Min True Probability: {self.min_true_probability*100:.1f}%")
-        if self.min_kelly_percentage > 0:
-            print(f"Min Kelly Percentage: {self.min_kelly_percentage*100:.1f}%")
-        if self.max_odds > 0:
-            print(f"Max Odds: {self.max_odds:.1f}")
+        print(f"Kelly Fraction: {self.scanner.kelly_fraction}")
+        print(f"Min EV: {self.scanner.min_ev_threshold*100:.1f}%")
+        print(f"Min True Probability: {self.scanner.min_true_probability*100:.1f}%")
+        if self.scanner.min_kelly_percentage > 0:
+            print(f"Min Kelly Percentage: {self.scanner.min_kelly_percentage*100:.1f}%")
+        if self.scanner.max_odds > 0:
+            print(f"Max Odds: {self.scanner.max_odds:.1f}")
+        print(f"Sharp Books: {', '.join(self.scanner.sharp_books)}")
+        print(f"Betting Bookmakers: {', '.join(self.scanner.betting_bookmakers)}")
+        print(f"One Bet Per Game: {self.scanner.one_bet_per_game}")
         print(f"Note: Results simulated based on true probabilities (historical scores not available)")
         print(f"{'='*80}\n")
         
