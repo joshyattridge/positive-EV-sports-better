@@ -19,7 +19,10 @@ def scanner():
         'KELLY_FRACTION': '0.25',
         'BANKROLL': '1000'
     }):
-        return PositiveEVScanner()
+        scanner = PositiveEVScanner()
+        # Clear cache before each test to ensure test isolation
+        scanner._odds_cache = {}
+        return scanner
 
 
 class TestScannerInitialization:

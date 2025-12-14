@@ -7,10 +7,13 @@ by comparing odds across multiple sportsbooks against sharp bookmakers.
 
 import requests
 from typing import Dict, List, Optional, Tuple, Set
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import os
+import pickle
+from pathlib import Path
 from dotenv import load_dotenv
+from functools import lru_cache
 from src.core.kelly_criterion import KellyCriterion
 from src.utils.bet_logger import BetLogger
 from src.utils.bet_repository import BetRepository
@@ -85,6 +88,15 @@ class PositiveEVScanner:
         self.bet_logger = BetLogger()
         self.bet_repository = BetRepository()
         
+        # Build optimized bookmakers list (your betting bookmakers + sharp books)
+        self.optimized_bookmakers = list(set(self.betting_bookmakers + self.sharp_books))
+        
+        # Persistent file-based caching for odds data (5 minute cache)
+        self._cache_file = Path('data/.odds_cache.pkl')
+        self._cache_file.parent.mkdir(exist_ok=True)
+        self._cache_duration = 300  # 5 minutes in seconds
+        self._odds_cache = self._load_cache()
+        
         # Sorting configuration - read from env or use defaults
         self.order_by = os.getenv('ORDER_BY', 'expected_profit').lower()
         self.sort_order = os.getenv('SORT_ORDER', 'desc').lower()
@@ -94,6 +106,31 @@ class PositiveEVScanner:
         self.skip_already_bet_games = os.getenv('SKIP_ALREADY_BET_GAMES', 'true').lower() == 'true'
         self.max_bet_failures = int(os.getenv('MAX_BET_FAILURES', '3'))
         
+    def _load_cache(self) -> Dict:
+        """Load cache from disk if it exists and is valid."""
+        try:
+            if self._cache_file.exists():
+                with open(self._cache_file, 'rb') as f:
+                    cache = pickle.load(f)
+                # Clean up expired entries
+                current_time = time.time()
+                cache = {k: v for k, v in cache.items() 
+                        if current_time - v[1] < self._cache_duration}
+                if cache:
+                    print(f"📦 Loaded {len(cache)} cached sport(s) from disk")
+                return cache
+        except Exception as e:
+            print(f"⚠️  Could not load cache: {e}")
+        return {}
+    
+    def _save_cache(self):
+        """Save cache to disk."""
+        try:
+            with open(self._cache_file, 'wb') as f:
+                pickle.dump(self._odds_cache, f)
+        except Exception as e:
+            print(f"⚠️  Could not save cache: {e}")
+    
     def get_available_sports(self) -> List[Dict]:
         """
         Get list of available sports.
@@ -114,9 +151,34 @@ class PositiveEVScanner:
             print(f"Error fetching sports: {e}")
             return []
     
+    def get_events(self, sport: str) -> List[Dict]:
+        """
+        Get list of upcoming events for a sport (FREE - doesn't count against quota).
+        Use this to check if events exist before calling get_odds().
+        
+        Args:
+            sport: Sport key (e.g., 'soccer_epl')
+            
+        Returns:
+            List of events (without odds)
+        """
+        url = f"{self.base_url}/sports/{sport}/events"
+        params = {
+            'apiKey': self.api_key,
+            'dateFormat': 'iso'
+        }
+        
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Error fetching events for {sport}: {e}")
+            return []
+    
     def get_odds(self, sport: str, markets: str = 'h2h') -> List[Dict]:
         """
-        Get odds for a specific sport.
+        Get odds for a specific sport with caching and optimization.
         
         Args:
             sport: Sport key (e.g., 'americanfootball_nfl')
@@ -125,26 +187,47 @@ class PositiveEVScanner:
         Returns:
             List of games with odds from multiple bookmakers
         """
+        # Check cache first (5 minute cache)
+        cache_key = f"{sport}_{markets}"
+        current_time = time.time()
+        
+        if cache_key in self._odds_cache:
+            cached_data, cache_time = self._odds_cache[cache_key]
+            if current_time - cache_time < self._cache_duration:
+                print(f"💾 Using cached odds for {sport} (cached {int(current_time - cache_time)}s ago)")
+                return cached_data
+        
         url = f"{self.base_url}/sports/{sport}/odds"
+        
+        # Use specific bookmakers for better control
+        # Up to 10 bookmakers = 1 region equivalent
         params = {
             'apiKey': self.api_key,
-            'regions': self.api_regions,
+            'bookmakers': ','.join(self.optimized_bookmakers),
             'markets': markets,
             'oddsFormat': self.odds_format,
-            'dateFormat': 'iso',
-            'includeLinks': 'true'  # Get bookmaker links to events
+            'dateFormat': 'iso'
         }
         
         try:
             response = requests.get(url, params=params)
             response.raise_for_status()
             
-            # Print remaining requests
+            # Print remaining requests and usage info
             remaining = response.headers.get('x-requests-remaining')
-            if remaining:
-                print(f"API Requests Remaining: {remaining}")
+            used = response.headers.get('x-requests-used')
+            last_cost = response.headers.get('x-requests-last')
             
-            return response.json()
+            if remaining:
+                print(f"📊 API Usage - Remaining: {remaining}, Used: {used}, Last Cost: {last_cost}")
+            
+            data = response.json()
+            
+            # Cache the result in memory and persist to disk
+            self._odds_cache[cache_key] = (data, current_time)
+            self._save_cache()
+            
+            return data
         except Exception as e:
             print(f"Error fetching odds for {sport}: {e}")
             return []
@@ -206,6 +289,13 @@ class PositiveEVScanner:
         print(f"Scanning {sport.upper()} for +EV opportunities...")
         print(f"{'='*80}\n")
         
+        # First check if there are any events (FREE endpoint)
+        events = self.get_events(sport)
+        if not events:
+            print(f"ℹ️  No upcoming events for {sport}, skipping odds fetch")
+            return []
+        
+        print(f"✓ Found {len(events)} events for {sport}, fetching odds...")
         games = self.get_odds(sport, markets)
         opportunities = []
         
