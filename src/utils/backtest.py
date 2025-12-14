@@ -307,11 +307,16 @@ class HistoricalBacktester:
                             if full_kelly_pct < self.min_kelly_percentage:
                                 continue
                             
-                            # Now apply Kelly fraction for actual position sizing (risk management)
-                            kelly_pct = full_kelly_pct * self.kelly_fraction
-                            kelly_pct = max(0, min(kelly_pct, 0.25))
+                            # Use Kelly Criterion class to calculate stake (includes rounding)
+                            self.kelly.bankroll = self.current_bankroll
+                            kelly_result = self.kelly.calculate_kelly_stake(
+                                decimal_odds=bet_odds,
+                                true_probability=true_probability,
+                                kelly_fraction=self.kelly_fraction
+                            )
                             
-                            stake = self.current_bankroll * kelly_pct
+                            stake = kelly_result['recommended_stake']
+                            kelly_pct = kelly_result['kelly_percentage'] / 100  # Convert back to decimal
                             expected_profit = stake * ev
                             
                             opportunities.append({

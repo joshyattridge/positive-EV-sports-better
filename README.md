@@ -109,6 +109,7 @@ MAX_DAYS_AHEAD=2.0
 BANKROLL=1000          # Your total betting bankroll
 KELLY_FRACTION=0.25    # Fraction of Kelly to use (0.25 = quarter Kelly, 0.5 = half Kelly, 1.0 = full Kelly)
 MIN_KELLY_PERCENTAGE=0.02  # Minimum Kelly percentage (0.02 = 2%, filters out tiny stakes)
+BET_ROUNDING=0         # Round bets to nearest multiple (0=no rounding, 1=nearest £1, 5=nearest £5, 10=nearest £10)
 
 # Failure Handling
 MAX_BET_FAILURES=3     # Skip bets that fail this many times (set to 0 to disable)

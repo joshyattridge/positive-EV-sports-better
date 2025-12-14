@@ -31,6 +31,22 @@ class KellyCriterion:
             bankroll: Total bankroll amount (reads from env if not provided)
         """
         self.bankroll = bankroll or float(os.getenv('BANKROLL', '1000'))
+        self.bet_rounding = float(os.getenv('BET_ROUNDING', '0'))
+    
+    def round_to_nearest(self, value: float, nearest: float) -> float:
+        """
+        Round a value to the nearest multiple of a given number.
+        
+        Args:
+            value: The value to round
+            nearest: The multiple to round to (e.g., 5 for nearest £5)
+            
+        Returns:
+            Rounded value
+        """
+        if nearest == 0:
+            return value
+        return round(value / nearest) * nearest
     
     def calculate_kelly_stake(
         self, 
@@ -69,6 +85,9 @@ class KellyCriterion:
         
         # Ensure stake is not negative (shouldn't bet if EV is negative)
         recommended_stake = max(0, recommended_stake)
+        
+        # Apply bet rounding
+        recommended_stake = self.round_to_nearest(recommended_stake, self.bet_rounding)
         
         return {
             'kelly_percentage': kelly_percentage * 100,  # Convert to percentage
