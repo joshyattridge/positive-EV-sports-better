@@ -145,7 +145,7 @@ class BetLogger:
             print(f"❌ Error logging bet: {e}")
             return False
     
-    def update_bet_result(self, 
+    def update_bet_result(self,
                          timestamp: str,
                          result: str,
                          actual_profit_loss: Optional[float] = None,
@@ -167,9 +167,11 @@ class BetLogger:
             # Read all existing bets
             rows = []
             updated = False
+            actual_fieldnames = None
             
             with open(self.log_path, 'r', newline='', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
+                actual_fieldnames = reader.fieldnames  # Get actual fieldnames from CSV
                 for row in reader:
                     if row['timestamp'] == timestamp:
                         # Update this row
@@ -186,9 +188,9 @@ class BetLogger:
                 print(f"⚠️  No bet found with timestamp: {timestamp}")
                 return False
             
-            # Write back all rows
+            # Write back all rows using actual fieldnames from the CSV
             with open(self.log_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=self.CSV_HEADERS)
+                writer = csv.DictWriter(f, fieldnames=actual_fieldnames)
                 writer.writeheader()
                 writer.writerows(rows)
             
@@ -197,9 +199,7 @@ class BetLogger:
             
         except Exception as e:
             print(f"❌ Error updating bet result: {e}")
-            return False
-    
-    # Backward compatibility: delegate to BetRepository
+            return False    # Backward compatibility: delegate to BetRepository
     def get_already_bet_game_ids(self) -> set:
         """Get a set of game IDs (delegates to BetRepository for backward compatibility)."""
         from src.utils.bet_repository import BetRepository

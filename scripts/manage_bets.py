@@ -13,13 +13,13 @@ import sys
 import csv
 from datetime import datetime
 from pathlib import Path
-import sys
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils.bet_logger import BetLogger
 from src.utils.bet_repository import BetRepository
+from src.utils.score_fetcher import ScoreFetcher
 
 
 def view_summary():
@@ -146,6 +146,153 @@ def interactive_update():
     update_bet_result(timestamp, result, profit_loss)
 
 
+def auto_settle_bets(days_from: int = 3, dry_run: bool = False):
+    """
+    Automatically fetch scores and settle pending bets.
+    
+    Args:
+        days_from: Number of days in the past to fetch scores (1-3)
+        dry_run: If True, show what would be updated without making changes
+    """
+    logger = BetLogger()
+    
+    if not logger.log_path.exists():
+        print("❌ No bet history file found")
+        return
+    
+    print("\n" + "="*80)
+    print("🔄 AUTO-SETTLING PENDING BETS")
+    print("="*80 + "\n")
+    
+    if dry_run:
+        print("🧪 DRY RUN MODE - No changes will be made\n")
+    
+    # Initialize score fetcher
+    try:
+        fetcher = ScoreFetcher()
+    except ValueError as e:
+        print(f"❌ {e}")
+        return
+    
+    # Read all bets
+    with open(logger.log_path, 'r', newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        bets = list(reader)
+    
+    # Group pending bets by sport
+    pending_by_sport = {}
+    for bet in bets:
+        if bet.get('bet_result') == 'pending':
+            sport = bet.get('sport')
+            if sport not in pending_by_sport:
+                pending_by_sport[sport] = []
+            pending_by_sport[sport].append(bet)
+    
+    if not pending_by_sport:
+        print("✅ No pending bets to settle!")
+        return
+    
+    total_pending = sum(len(bets) for bets in pending_by_sport.values())
+    print(f"Found {total_pending} pending bet(s) across {len(pending_by_sport)} sport(s)\n")
+    
+    settled_count = 0
+    still_pending_count = 0
+    
+    # Process each sport
+    for sport, sport_bets in pending_by_sport.items():
+        print(f"📊 Fetching scores for {sport}...")
+        scores = fetcher.get_scores(sport, days_from)
+        
+        if not scores:
+            print(f"  ⚠️  No scores available for {sport}")
+            still_pending_count += len(sport_bets)
+            continue
+        
+        # Create a lookup dict by game_id
+        scores_by_id = {game['id']: game for game in scores}
+        
+        print(f"  Found {len(scores)} game(s) with results\n")
+        
+        # Check each bet
+        for bet in sport_bets:
+            game_id = bet.get('game_id')
+            timestamp = bet.get('timestamp')
+            
+            if game_id not in scores_by_id:
+                print(f"  ⏳ {bet['game']}: Game not completed yet")
+                still_pending_count += 1
+                continue
+            
+            game_data = scores_by_id[game_id]
+            
+            # Determine result
+            result, profit_loss_ratio = fetcher.determine_bet_result(
+                game_data=game_data,
+                market=bet['market'],
+                outcome=bet['outcome'],
+                bet_odds=float(bet['bet_odds'])
+            )
+            
+            if result == 'pending':
+                print(f"  ⏳ {bet['game']}: Game in progress")
+                still_pending_count += 1
+                continue
+            
+            # Calculate actual profit/loss based on stake
+            stake = float(bet['recommended_stake'])
+            if profit_loss_ratio is not None:
+                actual_pl = stake * profit_loss_ratio
+            else:
+                actual_pl = 0.0
+            
+            # Display result
+            if result == 'win':
+                emoji = "🎉"
+                result_text = f"WON (+£{actual_pl:.2f})"
+            elif result == 'loss':
+                emoji = "😔"
+                result_text = f"LOST (£{actual_pl:.2f})"
+            else:  # void
+                emoji = "↩️"
+                result_text = "VOID (£0.00)"
+            
+            scores_text = " vs ".join([f"{s['name']} {s['score']}" for s in game_data.get('scores', [])])
+            print(f"  {emoji} {bet['game']}")
+            print(f"     Scores: {scores_text}")
+            print(f"     Bet: {bet['outcome']} @ {bet['bet_odds']}")
+            print(f"     Result: {result_text}")
+            
+            # Update bet if not dry run
+            if not dry_run:
+                success = logger.update_bet_result(
+                    timestamp=timestamp,
+                    result=result,
+                    actual_profit_loss=actual_pl,
+                    notes=f"Auto-settled on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+                if success:
+                    settled_count += 1
+                    print(f"     ✅ Updated in database")
+                else:
+                    print(f"     ❌ Failed to update")
+            else:
+                settled_count += 1
+            
+            print()
+    
+    # Summary
+    print("="*80)
+    if dry_run:
+        print(f"🧪 DRY RUN COMPLETE")
+        print(f"   Would settle: {settled_count} bet(s)")
+        print(f"   Still pending: {still_pending_count} bet(s)")
+    else:
+        print(f"✅ AUTO-SETTLE COMPLETE")
+        print(f"   Settled: {settled_count} bet(s)")
+        print(f"   Still pending: {still_pending_count} bet(s)")
+    print("="*80 + "\n")
+
+
 def export_to_analysis():
     """Export bet history to a format suitable for analysis."""
     logger = BetLogger()
@@ -199,9 +346,12 @@ def print_usage():
     print("  python manage_bets.py summary           - Show bet history summary")
     print("  python manage_bets.py pending           - List pending bets")
     print("  python manage_bets.py update            - Interactive mode to update results")
+    print("  python manage_bets.py settle [--dry-run] - Auto-settle bets using API scores")
     print("  python manage_bets.py export            - Export to analysis-ready CSV")
     print("\nExamples:")
     print("  python manage_bets.py summary")
+    print("  python manage_bets.py settle            # Automatically settle completed bets")
+    print("  python manage_bets.py settle --dry-run  # Preview what would be settled")
     print("  python manage_bets.py update")
     print()
 
@@ -222,6 +372,11 @@ def main():
     
     elif command == 'update':
         interactive_update()
+    
+    elif command == 'settle':
+        # Check for dry-run flag
+        dry_run = '--dry-run' in sys.argv
+        auto_settle_bets(days_from=3, dry_run=dry_run)
     
     elif command == 'export':
         export_to_analysis()
