@@ -1073,6 +1073,23 @@ class HistoricalBacktester:
         print(f"  Min: {aggregate['min_return_pct']:+.2f}%")
         print(f"  Max: {aggregate['max_return_pct']:+.2f}%")
         print(f"\nProbability of Profit: {aggregate['probability_profit']:.1f}%")
+        
+        # Show per-sport breakdown
+        sports_in_bets = set(b.get('sport') for b in base_opportunities if b.get('sport'))
+        if len(sports_in_bets) > 0:
+            print(f"\nPer-Sport Breakdown:")
+            for sport in sorted(sports_in_bets):
+                sport_bets = [b for b in base_opportunities if b.get('sport') == sport]
+                sport_count = len(sport_bets)
+                sport_avg_ev = np.mean([b.get('ev', 0) for b in sport_bets]) * 100
+                sport_avg_prob = np.mean([b.get('true_probability', 0) for b in sport_bets]) * 100
+                sport_avg_odds = np.mean([b.get('odds', 0) for b in sport_bets])
+                print(f"  {sport}:")
+                print(f"    Bets: {sport_count}")
+                print(f"    Avg EV: {sport_avg_ev:.2f}%")
+                print(f"    Avg True Prob: {sport_avg_prob:.1f}%")
+                print(f"    Avg Odds: {sport_avg_odds:.2f}")
+        
         print(f"\n{'='*80}\n")
         
         return aggregate

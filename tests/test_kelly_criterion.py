@@ -56,7 +56,9 @@ class TestKellyCriterion:
     
     def test_calculate_kelly_stake_half_kelly(self):
         """Test Kelly calculation with half Kelly fraction"""
+        # Use a Kelly instance with no rounding to test the relationship
         kelly = KellyCriterion(bankroll=1000)
+        kelly.bet_rounding = 0  # Disable rounding for this test
         
         # Full Kelly
         full_kelly = kelly.calculate_kelly_stake(
@@ -72,7 +74,7 @@ class TestKellyCriterion:
             kelly_fraction=0.5
         )
         
-        # Half Kelly should recommend half the stake
+        # Half Kelly should recommend half the stake (when rounding is disabled)
         assert half_kelly['recommended_stake'] == pytest.approx(
             full_kelly['recommended_stake'] / 2, rel=0.01
         )
