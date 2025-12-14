@@ -102,6 +102,9 @@ MIN_EV_THRESHOLD=0.02
 # Maximum odds filter (5.0 = max 5x odds, set to 0.0 to disable)
 MAX_ODDS=5.0
 
+# Maximum days ahead filter (2.0 = only games within 2 days, set to 0 to disable)
+MAX_DAYS_AHEAD=2.0
+
 # Kelly Criterion Bankroll Management
 BANKROLL=1000          # Your total betting bankroll
 KELLY_FRACTION=0.25    # Fraction of Kelly to use (0.25 = quarter Kelly, 0.5 = half Kelly, 1.0 = full Kelly)

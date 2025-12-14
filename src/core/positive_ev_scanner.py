@@ -63,6 +63,9 @@ class PositiveEVScanner:
         # Maximum odds threshold - read from env or use default (0.0 = no filter)
         self.max_odds = float(os.getenv('MAX_ODDS', '0.0'))
         
+        # Maximum days ahead filter - read from env or use default (0 = no filter)
+        self.max_days_ahead = float(os.getenv('MAX_DAYS_AHEAD', '0'))
+        
         # API regions - read from env or use default
         self.api_regions = os.getenv('API_REGIONS', 'us,uk,eu,au')
         
@@ -233,6 +236,13 @@ class PositiveEVScanner:
             commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
             if commence_time <= datetime.now(commence_time.tzinfo):
                 continue
+            
+            # Skip games too far in the future if max_days_ahead is set
+            if self.max_days_ahead > 0:
+                now = datetime.now(commence_time.tzinfo)
+                time_until_game = (commence_time - now).total_seconds() / 86400  # Convert to days
+                if time_until_game > self.max_days_ahead:
+                    continue
             
             home_team = game['home_team']
             away_team = game['away_team']
@@ -568,6 +578,8 @@ def main():
         print(f"🎲 Minimum true probability: {scanner.min_true_probability * 100:.1f}%")
     if scanner.max_odds > 0:
         print(f"📊 Maximum odds: {scanner.max_odds:.1f}")
+    if scanner.max_days_ahead > 0:
+        print(f"⏰ Maximum days ahead: {scanner.max_days_ahead:.1f} days")
     print(f"💰 Bankroll: £{scanner.kelly.bankroll:.2f}")
     print(f"📐 Kelly Strategy: {scanner.kelly_fraction * 100:.0f}% Kelly ({scanner.kelly_fraction:.2f} fraction)")
     if scanner.min_kelly_percentage > 0:

@@ -495,3 +495,33 @@ class TestMaxOddsFilter:
             scanner = PositiveEVScanner()
             # With max_odds=8.0, bets above 8.0 should be filtered
             assert scanner.max_odds == 8.0
+
+
+class TestMaxDaysAheadFilter:
+    """Test maximum days ahead filter"""
+    
+    def test_defaults_to_zero_when_not_set(self):
+        """Test defaults to 0 (no filter) when not set"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key'
+        }, clear=True):
+            scanner = PositiveEVScanner()
+            assert scanner.max_days_ahead == 0
+    
+    def test_filter_configured_correctly(self):
+        """Test that MAX_DAYS_AHEAD filter is configured correctly"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key',
+            'MAX_DAYS_AHEAD': '2'
+        }):
+            scanner = PositiveEVScanner()
+            assert scanner.max_days_ahead == 2.0
+    
+    def test_filter_with_decimal_days(self):
+        """Test that MAX_DAYS_AHEAD accepts decimal values"""
+        with patch.dict('os.environ', {
+            'ODDS_API_KEY': 'test_key',
+            'MAX_DAYS_AHEAD': '1.5'
+        }):
+            scanner = PositiveEVScanner()
+            assert scanner.max_days_ahead == 1.5
