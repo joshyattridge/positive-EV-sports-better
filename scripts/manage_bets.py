@@ -22,15 +22,21 @@ from src.utils.bet_repository import BetRepository
 from src.utils.score_fetcher import ScoreFetcher
 
 
-def view_summary():
+def view_summary(paper_trade: bool = False):
     """Display summary of all bets."""
-    repository = BetRepository()
+    if paper_trade:
+        repository = BetRepository(log_path="data/paper_trade_history.csv")
+    else:
+        repository = BetRepository()
     repository.print_summary()
 
 
-def list_pending_bets():
+def list_pending_bets(paper_trade: bool = False):
     """List all pending bets that need results."""
-    logger = BetLogger()
+    if paper_trade:
+        logger = BetLogger(log_path="data/paper_trade_history.csv")
+    else:
+        logger = BetLogger()
     
     if not logger.log_path.exists():
         print("❌ No bet history file found")
@@ -65,7 +71,7 @@ def list_pending_bets():
     print("="*80 + "\n")
 
 
-def update_bet_result(timestamp: str, result: str, profit_loss: float = None):
+def update_bet_result(timestamp: str, result: str, profit_loss: float = None, paper_trade: bool = False):
     """
     Update a bet's result.
     
@@ -73,8 +79,12 @@ def update_bet_result(timestamp: str, result: str, profit_loss: float = None):
         timestamp: Timestamp of the bet to update
         result: 'win', 'loss', 'void', or 'pending'
         profit_loss: Actual profit or loss amount
+        paper_trade: If True, update paper trade history instead
     """
-    logger = BetLogger()
+    if paper_trade:
+        logger = BetLogger(log_path="data/paper_trade_history.csv")
+    else:
+        logger = BetLogger()
     
     valid_results = ['win', 'loss', 'void', 'pending']
     if result.lower() not in valid_results:
@@ -96,12 +106,15 @@ def update_bet_result(timestamp: str, result: str, profit_loss: float = None):
             print(f"   😔 Lost. Loss: £{profit_loss:.2f}" if profit_loss else "   😔 Lost.")
 
 
-def interactive_update():
+def interactive_update(paper_trade: bool = False):
     """Interactive mode to update bet results."""
-    logger = BetLogger()
+    if paper_trade:
+        logger = BetLogger(log_path="data/paper_trade_history.csv")
+    else:
+        logger = BetLogger()
     
     # First, show pending bets
-    list_pending_bets()
+    list_pending_bets(paper_trade=paper_trade)
     
     if not logger.log_path.exists():
         return
@@ -143,18 +156,22 @@ def interactive_update():
             except ValueError:
                 print("⚠️  Invalid amount, proceeding without P/L value")
     
-    update_bet_result(timestamp, result, profit_loss)
+    update_bet_result(timestamp, result, profit_loss, paper_trade=paper_trade)
 
 
-def auto_settle_bets(days_from: int = 3, dry_run: bool = False):
+def auto_settle_bets(days_from: int = 3, dry_run: bool = False, paper_trade: bool = False):
     """
     Automatically fetch scores and settle pending bets.
     
     Args:
         days_from: Number of days in the past to fetch scores (1-3)
         dry_run: If True, show what would be updated without making changes
+        paper_trade: If True, settle paper trade history instead
     """
-    logger = BetLogger()
+    if paper_trade:
+        logger = BetLogger(log_path="data/paper_trade_history.csv")
+    else:
+        logger = BetLogger()
     
     if not logger.log_path.exists():
         print("❌ No bet history file found")
@@ -293,9 +310,12 @@ def auto_settle_bets(days_from: int = 3, dry_run: bool = False):
     print("="*80 + "\n")
 
 
-def export_to_analysis():
+def export_to_analysis(paper_trade: bool = False):
     """Export bet history to a format suitable for analysis."""
-    logger = BetLogger()
+    if paper_trade:
+        logger = BetLogger(log_path="data/paper_trade_history.csv")
+    else:
+        logger = BetLogger()
     
     if not logger.log_path.exists():
         print("❌ No bet history file found")
@@ -362,24 +382,27 @@ def main():
         print_usage()
         return
     
+    # Check for paper trade mode
+    paper_trade = '--paper-trade' in sys.argv
+    
     command = sys.argv[1].lower()
     
     if command == 'summary':
-        view_summary()
+        view_summary(paper_trade=paper_trade)
     
     elif command == 'pending':
-        list_pending_bets()
+        list_pending_bets(paper_trade=paper_trade)
     
     elif command == 'update':
-        interactive_update()
+        interactive_update(paper_trade=paper_trade)
     
     elif command == 'settle':
         # Check for dry-run flag
         dry_run = '--dry-run' in sys.argv
-        auto_settle_bets(days_from=3, dry_run=dry_run)
+        auto_settle_bets(days_from=3, dry_run=dry_run, paper_trade=paper_trade)
     
     elif command == 'export':
-        export_to_analysis()
+        export_to_analysis(paper_trade=paper_trade)
     
     else:
         print(f"❌ Unknown command: {command}")

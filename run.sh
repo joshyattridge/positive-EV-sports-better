@@ -17,22 +17,33 @@ if [ $# -eq 0 ]; then
     echo "Usage: ./run.sh <command>"
     echo ""
     echo "Commands:"
-    echo "  scan                     - Scan for +EV opportunities"
-    echo "  auto-bet [--dry-run]     - Automatically place best bet"
-    echo "  bets summary             - Show bet history summary"
-    echo "  bets pending             - List pending bets"
-    echo "  bets update              - Update bet results interactively"
-    echo "  bets settle [--dry-run]  - Auto-settle bets using API scores"
-    echo "  bets export              - Export bets for analysis"
-    echo "  backtest                 - Run historical backtest"
-    echo "  ignored                  - Show bets ignored due to failures"
+    echo "  scan                          - Scan for +EV opportunities"
+    echo "  auto-bet [options]            - Automatically place best bet"
+    echo "    --dry-run                   - Test mode (no actual bets)"
+    echo "    --paper-trade               - Paper trade mode (log without placing)"
+    echo "    --interval N                - Run continuously every N minutes"
+    echo "    --max-bets N                - Stop after N bets (use with --interval)"
+    echo "  bets summary                  - Show bet history summary"
+    echo "  bets pending                  - List pending bets"
+    echo "  bets update                   - Update bet results interactively"
+    echo "  bets settle [--dry-run]       - Auto-settle bets using API scores"
+    echo "  bets export                   - Export bets for analysis"
+    echo "  backtest                      - Run historical backtest"
+    echo "  ignored                       - Show bets ignored due to failures"
+    echo "  paper summary                 - Show paper trading summary"
+    echo "  paper pending                 - List pending paper trades"
+    echo "  paper settle [--dry-run]      - Auto-settle paper trades"
     echo ""
     echo "Examples:"
     echo "  ./run.sh scan"
     echo "  ./run.sh auto-bet --dry-run"
+    echo "  ./run.sh auto-bet --paper-trade"
+    echo "  ./run.sh auto-bet --paper-trade --interval 15"
+    echo "  ./run.sh auto-bet --interval 30 --max-bets 10"
     echo "  ./run.sh bets summary"
     echo "  ./run.sh bets settle"
-    echo "  ./run.sh bets settle --dry-run"
+    echo "  ./run.sh paper summary"
+    echo "  ./run.sh paper settle"
     exit 0
 fi
 
@@ -51,6 +62,13 @@ case $COMMAND in
         ;;
     bets)
         $VENV_PYTHON scripts/manage_bets.py "$@"
+        ;;
+    paper)
+        # Paper trading commands - route to manage_bets with paper trade flag
+        # Shift to get the subcommand and pass it before --paper-trade
+        SUBCMD=$1
+        shift
+        $VENV_PYTHON scripts/manage_bets.py "$SUBCMD" --paper-trade "$@"
         ;;
     backtest)
         echo "📊 Running backtest..."

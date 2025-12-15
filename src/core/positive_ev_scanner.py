@@ -31,12 +31,13 @@ class PositiveEVScanner:
     by comparing odds across sportsbooks.
     """
     
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, log_path: str = None):
         """
         Initialize the scanner with The Odds API key.
         
         Args:
             api_key: Your The Odds API key (optional, will read from .env if not provided)
+            log_path: Path to bet history CSV (optional, defaults to data/bet_history.csv)
         """
         # Read from environment variables if not provided
         self.api_key = api_key or os.getenv('ODDS_API_KEY')
@@ -84,9 +85,13 @@ class PositiveEVScanner:
         # Initialize Kelly Criterion calculator
         self.kelly = KellyCriterion()
         
-        # Initialize bet logger and repository
-        self.bet_logger = BetLogger()
-        self.bet_repository = BetRepository()
+        # Initialize bet logger and repository with custom log path if provided
+        if log_path:
+            self.bet_logger = BetLogger(log_path=log_path)
+            self.bet_repository = BetRepository(log_path=log_path)
+        else:
+            self.bet_logger = BetLogger()
+            self.bet_repository = BetRepository()
         
         # Build optimized bookmakers list (your betting bookmakers + sharp books)
         self.optimized_bookmakers = list(set(self.betting_bookmakers + self.sharp_books))

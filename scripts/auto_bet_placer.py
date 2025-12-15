@@ -34,23 +34,36 @@ class AutoBetPlacer:
     and places the bet automatically.
     """
     
-    def __init__(self, headless: bool = False, test_mode: bool = False):
+    def __init__(self, headless: bool = False, test_mode: bool = False, paper_trade: bool = False):
         """
         Initialize the auto bet placer.
         
         Args:
             headless: Whether to run browser in headless mode
             test_mode: If True, logs to test file instead of main bet history
+            paper_trade: If True, logs to paper trading file without placing actual bets
         """
-        self.scanner = PositiveEVScanner()
+        self.paper_trade = paper_trade
+        
+        # Determine the log path based on mode
+        if paper_trade:
+            log_path = "data/paper_trade_history.csv"
+        elif test_mode:
+            log_path = "data/test_bet_history.csv"
+        else:
+            log_path = "data/bet_history.csv"
+        
+        # Initialize scanner and bet logger with the same log path
+        self.scanner = PositiveEVScanner(log_path=log_path)
+        self.bet_logger = BetLogger(log_path=log_path)
         self.automation = BrowserAutomation(headless=headless)
         self.kelly = KellyCriterion()
-        self.bet_logger = BetLogger(test_mode=test_mode)
+        
         self.anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         
         # Get available bookmakers from credentials (no validation needed, auto-detected)
         available_bookmakers = BookmakerCredentials.get_available_bookmakers()
-        if not available_bookmakers:
+        if not available_bookmakers and not paper_trade:
             print("⚠️  Warning: No bookmaker credentials found. Cannot place bets.")
     
     def find_best_opportunity(self) -> Optional[Dict[str, Any]]:
@@ -188,6 +201,17 @@ Answer with ONLY one word: "YES" if the bet was successfully placed and confirme
         print("="*80)
         print(prompt)
         
+        if self.paper_trade:
+            print("\n📄 PAPER TRADE MODE - Logging bet without placing")
+            # Log as if bet was placed (pending result) but don't actually place it
+            self.bet_logger.log_bet(best_opp, bet_placed=True, notes="Paper trade - not actually placed")
+            return {
+                'success': True,
+                'message': 'Paper trade logged successfully',
+                'opportunity': best_opp,
+                'paper_trade': True
+            }
+        
         if dry_run:
             print("\n🔍 DRY RUN MODE - Not placing bet")
             # Log the bet as 'not_placed' in dry run mode
@@ -289,20 +313,90 @@ Answer with ONLY one word: "YES" if the bet was successfully placed and confirme
         await self.automation.close_browser()
 
 
+async def run_single_bet(dry_run: bool, paper_trade: bool, placer: AutoBetPlacer):
+    """Run a single bet placement cycle."""
+    result = await placer.place_best_bet(dry_run=dry_run)
+    
+    print("\n" + "="*80)
+    print("📊 RESULT")
+    print("="*80)
+    
+    if result['success']:
+        print(f"✅ {result['message']}")
+    else:
+        print(f"❌ {result['message']}")
+    
+    if 'opportunity' in result:
+        opp = result['opportunity']
+        print(f"\n🎯 Opportunity Details:")
+        print(f"   Game: {opp['game']}")
+        print(f"   Selection: {opp['outcome']}")
+        print(f"   Odds: {opp['odds']:.2f}")
+        print(f"   Stake: £{opp['kelly_stake']['recommended_stake']:.2f}")
+        print(f"   Expected Profit: £{opp['expected_profit']:.2f}")
+    
+    if 'automation_result' in result:
+        auto = result['automation_result']
+        print(f"\n🤖 Automation Stats:")
+        print(f"   Iterations: {auto.get('iterations', 'N/A')}")
+        print(f"   Tool calls: {len(auto.get('conversation_history', []))}")
+    
+    if 'validation_results' in result and result['validation_results']:
+        val = result['validation_results']
+        print(f"\n🔍 Odds Validation:")
+        if 'error' in val:
+            print(f"   ⚠️ Validation Error: {val['error']}")
+        else:
+            bookmaker_status = "✅" if val.get('bookmaker_correct') else "❌"
+            sharp_status = "✅" if val.get('sharp_correct') else "❌"
+            bookmaker_actual = val.get('bookmaker_actual_odds')
+            sharp_actual = val.get('sharp_actual_odds')
+            
+            print(f"   Bookmaker Odds: {bookmaker_status}")
+            if bookmaker_actual:
+                print(f"      Expected: {opp['odds']:.2f}, Actual: {bookmaker_actual:.2f}")
+            else:
+                print(f"      Expected: {opp['odds']:.2f}, Actual: not found")
+                
+            print(f"   Sharp Book Odds: {sharp_status}")
+            if sharp_actual:
+                expected_sharp = val.get('expected_sharp_odds')
+                if expected_sharp:
+                    print(f"      Expected: {expected_sharp:.2f}, Actual: {sharp_actual:.2f}")
+                else:
+                    print(f"      Actual: {sharp_actual:.2f}")
+            else:
+                print(f"      Actual: not found")
+    
+    return result
+
+
 async def main():
     """
     Main function to run the automated bet placement system.
     """
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Automated bet placement system')
+    parser.add_argument('--dry-run', '-d', action='store_true',
+                       help='Dry run mode (no actual bets placed)')
+    parser.add_argument('--paper-trade', '-p', action='store_true',
+                       help='Paper trade mode (log without placing)')
+    parser.add_argument('--interval', type=int, default=None,
+                       help='Run continuously with this interval in minutes')
+    parser.add_argument('--max-bets', type=int, default=None,
+                       help='Maximum number of bets to place before stopping')
+    
+    args = parser.parse_args()
+    
     print("="*80)
     print("🤖 AUTOMATED BET PLACEMENT SYSTEM")
     print("="*80)
     print(f"\n⏰ Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # Get mode from user
-    import sys
-    dry_run = '--dry-run' in sys.argv or '-d' in sys.argv
-    
-    if dry_run:
+    if args.paper_trade:
+        print("\n📄 Running in PAPER TRADE mode (logging to paper_trade_history.csv)")
+    elif args.dry_run:
         print("\n🔍 Running in DRY RUN mode (will not place actual bets)")
     else:
         print("\n⚠️  LIVE MODE - Will place actual bets!")
@@ -313,65 +407,46 @@ async def main():
             print("\n❌ Cancelled by user")
             return
     
-    placer = AutoBetPlacer(headless=False)
+    if args.interval:
+        print(f"\n🔄 Continuous mode: Running every {args.interval} minutes")
+        if args.max_bets:
+            print(f"   Will stop after {args.max_bets} bets")
+    
+    placer = AutoBetPlacer(headless=False, paper_trade=args.paper_trade)
+    bets_placed = 0
     
     try:
-        result = await placer.place_best_bet(dry_run=dry_run)
-        
-        print("\n" + "="*80)
-        print("📊 FINAL RESULT")
-        print("="*80)
-        
-        if result['success']:
-            print(f"✅ {result['message']}")
-        else:
-            print(f"❌ {result['message']}")
-        
-        if 'opportunity' in result:
-            opp = result['opportunity']
-            print(f"\n🎯 Opportunity Details:")
-            print(f"   Game: {opp['game']}")
-            print(f"   Selection: {opp['outcome']}")
-            print(f"   Odds: {opp['odds']:.2f}")
-            print(f"   Stake: £{opp['kelly_stake']['recommended_stake']:.2f}")
-            print(f"   Expected Profit: £{opp['expected_profit']:.2f}")
-        
-        if 'automation_result' in result:
-            auto = result['automation_result']
-            print(f"\n🤖 Automation Stats:")
-            print(f"   Iterations: {auto.get('iterations', 'N/A')}")
-            print(f"   Tool calls: {len(auto.get('conversation_history', []))}")
-        
-        if 'validation_results' in result and result['validation_results']:
-            val = result['validation_results']
-            print(f"\n🔍 Odds Validation:")
-            if 'error' in val:
-                print(f"   ⚠️ Validation Error: {val['error']}")
-            else:
-                bookmaker_status = "✅" if val.get('bookmaker_correct') else "❌"
-                sharp_status = "✅" if val.get('sharp_correct') else "❌"
-                bookmaker_actual = val.get('bookmaker_actual_odds')
-                sharp_actual = val.get('sharp_actual_odds')
+        if args.interval:
+            # Continuous mode
+            import time
+            while True:
+                print("\n" + "="*80)
+                print(f"🔄 Cycle {bets_placed + 1}")
+                print("="*80)
                 
-                print(f"   Bookmaker Odds: {bookmaker_status}")
-                if bookmaker_actual:
-                    print(f"      Expected: {opp['odds']:.2f}, Actual: {bookmaker_actual:.2f}")
-                else:
-                    print(f"      Expected: {opp['odds']:.2f}, Actual: not found")
+                result = await run_single_bet(args.dry_run, args.paper_trade, placer)
+                
+                if result['success']:
+                    bets_placed += 1
+                    print(f"\n📈 Total bets placed: {bets_placed}")
                     
-                print(f"   Sharp Book Odds: {sharp_status}")
-                if sharp_actual:
-                    # Get expected sharp odds from validation results
-                    expected_sharp = val.get('expected_sharp_odds')
-                    if expected_sharp:
-                        print(f"      Expected: {expected_sharp:.2f}, Actual: {sharp_actual:.2f}")
-                    else:
-                        print(f"      Actual: {sharp_actual:.2f}")
-                else:
-                    print(f"      Actual: not found")
-        
+                    if args.max_bets and bets_placed >= args.max_bets:
+                        print(f"\n✅ Reached maximum bets ({args.max_bets}). Stopping.")
+                        break
+                
+                print(f"\n⏸️  Waiting {args.interval} minutes until next scan...")
+                next_run = datetime.fromtimestamp(time.time() + args.interval * 60)
+                print(f"   Next scan at: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                await asyncio.sleep(args.interval * 60)
+        else:
+            # Single run mode
+            result = await run_single_bet(args.dry_run, args.paper_trade, placer)
+
     except KeyboardInterrupt:
-        print("\n\n❌ Interrupted by user")
+        print("\n\n🛑 Interrupted by user")
+        if args.interval:
+            print(f"📊 Total bets placed: {bets_placed}")
     except Exception as e:
         print(f"\n\n❌ Error: {str(e)}")
         import traceback

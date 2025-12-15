@@ -149,12 +149,19 @@ The project includes a convenient helper script that automatically uses the corr
 **Available Commands:**
 
 - `scan` - Scan for positive EV betting opportunities
-- `auto-bet [--dry-run]` - Automatically place the best bet
-  - `--dry-run` flag runs without placing actual bets (recommended for testing)
+- `auto-bet [options]` - Automatically place the best bet
+  - `--dry-run` - Test mode (no actual bets placed)
+  - `--paper-trade` - Paper trade mode (log without placing)
+  - `--interval N` - Run continuously every N minutes (waits between scans)
+  - `--max-bets N` - Stop after placing N bets (works with or without --interval)
 - `bets summary` - Show bet history summary
 - `bets pending` - List pending bets awaiting results
 - `bets update` - Interactively update bet results (win/loss)
+- `bets settle` - Auto-settle bets using real game scores
 - `bets export` - Export bet history for analysis
+- `paper summary` - Show paper trading summary
+- `paper pending` - List pending paper trades
+- `paper settle` - Auto-settle paper trades
 - `backtest` - Run historical backtesting
 - `ignored` - Show bets being ignored due to repeated failures
 
@@ -167,18 +174,62 @@ The project includes a convenient helper script that automatically uses the corr
 # Test automated betting (safe mode)
 ./run.sh auto-bet --dry-run
 
-# Place actual bet (be careful!)
+# Live paper trading (logs without placing real bets)
+./run.sh auto-bet --paper-trade
+
+# Continuous paper trading - every 15 minutes
+./run.sh auto-bet --paper-trade --interval 15
+
+# Place 10 paper trades rapidly (back-to-back scans)
+./run.sh auto-bet --paper-trade --max-bets 10
+
+# Continuous live betting - every 30 minutes, max 10 bets
+./run.sh auto-bet --interval 30 --max-bets 10
+
+# Place actual bet once (be careful!)
 ./run.sh auto-bet
 
 # Check your bet history
 ./run.sh bets summary
 
-# Update a bet result
+# Auto-settle completed bets
+./run.sh bets settle
+
+# Paper trading results
+./run.sh paper summary
+./run.sh paper settle
+
+# Update a bet result manually
 ./run.sh bets update
 
 # View bets being ignored due to repeated failures
 ./run.sh ignored
 ```
+
+### Paper Trading
+
+Test your strategy with real market data without risking money. See [PAPER_TRADING.md](PAPER_TRADING.md) for full documentation.
+
+**Quick start:**
+```bash
+# Single paper trade
+./run.sh auto-bet --paper-trade
+
+# Continuous paper trading (every 15 minutes)
+./run.sh auto-bet --paper-trade --interval 15
+
+# Place 10 paper trades as fast as possible
+./run.sh auto-bet --paper-trade --max-bets 10
+
+# Run for specific duration (96 bets at 15min intervals)
+./run.sh auto-bet --paper-trade --interval 15 --max-bets 96
+
+# View results
+./run.sh paper summary
+./run.sh paper settle
+```
+
+Paper trades are stored separately in `data/paper_trade_history.csv` and can be auto-settled using real game results.
 
 ### Automatic Failure Handling
 

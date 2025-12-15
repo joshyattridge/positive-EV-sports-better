@@ -3,6 +3,7 @@
 
 # Bet history and logs
 bet_history.csv
+paper_trade_history.csv
 bet_analysis_export.csv
 action_logs.json
 
