@@ -482,6 +482,8 @@ async def main():
                        help='Dry run mode (no actual bets placed)')
     parser.add_argument('--paper-trade', '-p', action='store_true',
                        help='Paper trade mode (log without placing)')
+    parser.add_argument('--headless', action='store_true',
+                       help='Run browser in headless mode')
     parser.add_argument('--interval', type=int, default=None,
                        help='Run continuously, scanning every X minutes')
     parser.add_argument('--max-bets', type=int, default=None,
@@ -516,7 +518,7 @@ async def main():
     elif args.max_bets:
         print(f"\n🎯 Single scan mode: Will place up to {args.max_bets} bet(s)")
     
-    placer = AutoBetPlacer(headless=False, paper_trade=args.paper_trade)
+    placer = AutoBetPlacer(headless=args.headless, paper_trade=args.paper_trade)
     total_bets_placed = 0
     cycle_count = 0
     
