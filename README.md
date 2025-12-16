@@ -51,6 +51,51 @@ positive-EV-sports-better/
 
 ### Quick Start
 
+#### Option 1: Using Docker (Recommended)
+
+1. **Clone the repository**:
+
+```bash
+git clone https://github.com/***REDACTED***dge/positive-EV-sports-better.git
+cd positive-EV-sports-better
+```
+
+2. **Set up your environment**:
+
+```bash
+cp .env.example .env
+# Edit .env and add your API keys and bankroll settings
+```
+
+3. **Build the Docker image**:
+
+```bash
+docker build -t positive-ev-sports-better .
+```
+
+4. **Run with Docker**:
+
+```bash
+# Scan for +EV opportunities
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh scan
+
+# Auto-bet (dry run)
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh auto-bet --dry-run
+
+# View bet history
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh bets summary
+
+# Settle bets
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh bets settle
+
+# Run default (auto-bet placer)
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better
+```
+
+**Note**: The `-v "$(pwd)/data:/app/data"` flag mounts your local data directory so bet history persists between runs.
+
+#### Option 2: Local Installation
+
 1. **Clone the repository**:
 
 ```bash
@@ -137,6 +182,55 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 .venv/bin/python scripts/auto_bet_placer.py --dry-run
 .venv/bin/python scripts/manage_bets.py summary
 ```
+
+### Docker Usage
+
+The project includes full Docker support for easy deployment and portability.
+
+**Build the Docker image:**
+
+```bash
+docker build -t positive-ev-sports-better .
+```
+
+**Run any command:**
+
+```bash
+# Scan for opportunities
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh scan
+
+# Auto-bet with dry run
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh auto-bet --dry-run
+
+# Paper trade continuously every 15 minutes
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh auto-bet --paper-trade --interval 15
+
+# View bet summary
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh bets summary
+
+# Settle bets automatically
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh bets settle
+
+# Run default command (auto-bet placer)
+docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better
+```
+
+**Using docker-compose:**
+
+```bash
+# Start in background
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+**Deploy to AWS:**
+
+See [AWS-DEPLOYMENT.md](AWS-DEPLOYMENT.md) for detailed instructions on deploying to AWS EC2, ECS, or Lightsail.
 
 ### Helper Script (`run.sh`)
 

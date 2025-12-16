@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  betting-bot:
+    build: .
+    container_name: positive-ev-sports-better
+    volumes:
+      # Mount data directory to persist bet history and logs
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DISPLAY=:99
+    # Uncomment to run specific commands
+    # command: python -m scripts.auto_bet_placer
+    restart: unless-stopped
+    # Uncomment for interactive mode
+    # stdin_open: true
+    # tty: true
