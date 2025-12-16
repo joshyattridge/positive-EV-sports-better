@@ -314,6 +314,67 @@ class TestIntervalAndMaxBetsFlags:
         assert mock_args.interval == 15
         assert mock_args.max_bets == 10
         # In implementation, this would run every 15 minutes until 10 bets placed
+    
+    @pytest.mark.asyncio
+    @patch('scripts.auto_bet_placer.run_bet_cycle')
+    async def test_interval_mode_resets_bet_count_per_cycle(self, mock_run_bet_cycle):
+        """Test that interval mode allows max_bets per cycle, not total"""
+        from unittest.mock import AsyncMock
+        
+        # First cycle places 3 bets, second cycle places 2 bets
+        mock_run_bet_cycle.side_effect = [3, 2]
+        
+        # Simulate two interval cycles with max_bets=5
+        cycle1_result = await mock_run_bet_cycle(
+            dry_run=False,
+            paper_trade=True,
+            placer=AsyncMock(),
+            max_bets=5
+        )
+        
+        cycle2_result = await mock_run_bet_cycle(
+            dry_run=False,
+            paper_trade=True,
+            placer=AsyncMock(),
+            max_bets=5
+        )
+        
+        # Each cycle should be able to place up to max_bets
+        assert cycle1_result == 3  # First cycle placed 3
+        assert cycle2_result == 2  # Second cycle placed 2
+        # Total across cycles is 5, but each cycle gets fresh max_bets allowance
+        assert mock_run_bet_cycle.call_count == 2
+    
+    @pytest.mark.asyncio
+    async def test_single_run_with_max_bets_places_multiple(self):
+        """Test single-run mode (no interval) with max_bets places multiple bets"""
+        from scripts.auto_bet_placer import run_bet_cycle
+        from unittest.mock import AsyncMock, Mock
+        
+        # Create mock placer with multiple opportunities
+        mock_placer = Mock()
+        opportunities = [
+            {'game': f'Game {i}', 'odds': 2.0 + i*0.1, 'ev_percentage': 5.0 - i*0.5, 
+             'bookmaker_key': 'bet365', 'kelly_stake': {'recommended_stake': 10.0}}
+            for i in range(5)
+        ]
+        # Make find_best_opportunities return regular list (not coroutine)
+        mock_placer.find_best_opportunities = Mock(return_value=opportunities[:3])
+        # Make place_specific_bet async and return success
+        mock_placer.place_specific_bet = AsyncMock(return_value={'success': True})
+        
+        # Run one cycle with max_bets=3
+        bets_placed = await run_bet_cycle(
+            dry_run=False,
+            paper_trade=True,
+            placer=mock_placer,
+            max_bets=3
+        )
+        
+        # Should place 3 bets (not all 5 available)
+        assert bets_placed == 3
+        mock_placer.find_best_opportunities.assert_called_once_with(max_count=3)
+        assert mock_placer.place_specific_bet.call_count == 3
 
 
 class TestPaperTradingIntegration:

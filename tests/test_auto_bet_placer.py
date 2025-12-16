@@ -198,6 +198,309 @@ class TestFindBestOpportunity:
         assert best_opp is None
 
 
+class TestFindBestOpportunities:
+    """Test finding multiple best opportunities"""
+    
+    @patch('scripts.auto_bet_placer.PositiveEVScanner')
+    def test_find_best_opportunities_multiple(self, mock_scanner_class, auto_bet_placer):
+        """Test finding multiple opportunities"""
+        # Mock scanner to return multiple opportunities
+        mock_scanner = Mock()
+        mock_scanner.scan_all_sports.return_value = {
+            'soccer_epl': [
+                {
+                    'sport': 'soccer_epl',
+                    'game': 'Arsenal @ Chelsea',
+                    'market': 'h2h',
+                    'outcome': 'Arsenal',
+                    'bookmaker': 'Bet365',
+                    'bookmaker_key': 'bet365',
+                    'odds': 2.5,
+                    'ev_percentage': 5.0,
+                    'expected_profit': 10.0,
+                    'bookmaker_url': 'https://bet365.com',
+                    'kelly_stake': {'recommended_stake': 50.0}
+                },
+                {
+                    'sport': 'soccer_epl',
+                    'game': 'Liverpool @ Man City',
+                    'market': 'h2h',
+                    'outcome': 'Liverpool',
+                    'bookmaker': 'William Hill',
+                    'bookmaker_key': 'williamhill',
+                    'odds': 3.0,
+                    'ev_percentage': 4.0,
+                    'expected_profit': 8.0,
+                    'bookmaker_url': 'https://williamhill.com',
+                    'kelly_stake': {'recommended_stake': 40.0}
+                },
+                {
+                    'sport': 'soccer_epl',
+                    'game': 'Spurs @ Brighton',
+                    'market': 'h2h',
+                    'outcome': 'Spurs',
+                    'bookmaker': 'Paddy Power',
+                    'bookmaker_key': 'paddypower',
+                    'odds': 2.2,
+                    'ev_percentage': 3.0,
+                    'expected_profit': 6.0,
+                    'bookmaker_url': 'https://paddypower.com',
+                    'kelly_stake': {'recommended_stake': 30.0}
+                }
+            ]
+        }
+        mock_scanner.sort_opportunities.side_effect = lambda x: x
+        mock_scanner.filter_one_bet_per_game.side_effect = lambda x: x
+        
+        auto_bet_placer.scanner = mock_scanner
+        
+        # Request top 2 opportunities
+        opps = auto_bet_placer.find_best_opportunities(max_count=2)
+        
+        assert len(opps) == 2
+        assert opps[0]['game'] == 'Arsenal @ Chelsea'
+        assert opps[1]['game'] == 'Liverpool @ Man City'
+    
+    @patch('scripts.auto_bet_placer.PositiveEVScanner')
+    def test_find_best_opportunities_returns_all_when_fewer_available(self, mock_scanner_class, auto_bet_placer):
+        """Test returns all opportunities when fewer than max_count"""
+        mock_scanner = Mock()
+        mock_scanner.scan_all_sports.return_value = {
+            'soccer_epl': [
+                {
+                    'sport': 'soccer_epl',
+                    'game': 'Arsenal @ Chelsea',
+                    'market': 'h2h',
+                    'outcome': 'Arsenal',
+                    'bookmaker': 'Bet365',
+                    'bookmaker_key': 'bet365',
+                    'odds': 2.5,
+                    'ev_percentage': 5.0,
+                    'expected_profit': 10.0,
+                    'bookmaker_url': 'https://bet365.com',
+                    'kelly_stake': {'recommended_stake': 50.0}
+                }
+            ]
+        }
+        mock_scanner.sort_opportunities.side_effect = lambda x: x
+        mock_scanner.filter_one_bet_per_game.side_effect = lambda x: x
+        
+        auto_bet_placer.scanner = mock_scanner
+        
+        # Request 5 but only 1 available
+        opps = auto_bet_placer.find_best_opportunities(max_count=5)
+        
+        assert len(opps) == 1
+        assert opps[0]['game'] == 'Arsenal @ Chelsea'
+    
+    @patch('scripts.auto_bet_placer.PositiveEVScanner')
+    def test_find_best_opportunities_none_found(self, mock_scanner_class, auto_bet_placer):
+        """Test returns empty list when no opportunities"""
+        mock_scanner = Mock()
+        mock_scanner.scan_all_sports.return_value = {}
+        
+        auto_bet_placer.scanner = mock_scanner
+        
+        opps = auto_bet_placer.find_best_opportunities(max_count=5)
+        
+        assert len(opps) == 0
+    
+    @patch('scripts.auto_bet_placer.PositiveEVScanner')
+    def test_find_best_opportunities_default_single(self, mock_scanner_class, auto_bet_placer):
+        """Test defaults to returning 1 opportunity"""
+        mock_scanner = Mock()
+        mock_scanner.scan_all_sports.return_value = {
+            'soccer_epl': [
+                {
+                    'sport': 'soccer_epl',
+                    'game': 'Arsenal @ Chelsea',
+                    'market': 'h2h',
+                    'outcome': 'Arsenal',
+                    'bookmaker': 'Bet365',
+                    'bookmaker_key': 'bet365',
+                    'odds': 2.5,
+                    'ev_percentage': 5.0,
+                    'expected_profit': 10.0,
+                    'bookmaker_url': 'https://bet365.com',
+                    'kelly_stake': {'recommended_stake': 50.0}
+                },
+                {
+                    'sport': 'soccer_epl',
+                    'game': 'Liverpool @ Man City',
+                    'market': 'h2h',
+                    'outcome': 'Liverpool',
+                    'bookmaker': 'William Hill',
+                    'bookmaker_key': 'williamhill',
+                    'odds': 3.0,
+                    'ev_percentage': 4.0,
+                    'expected_profit': 8.0,
+                    'bookmaker_url': 'https://williamhill.com',
+                    'kelly_stake': {'recommended_stake': 40.0}
+                }
+            ]
+        }
+        mock_scanner.sort_opportunities.side_effect = lambda x: x
+        mock_scanner.filter_one_bet_per_game.side_effect = lambda x: x
+        
+        auto_bet_placer.scanner = mock_scanner
+        
+        # Don't specify max_count (defaults to 1)
+        opps = auto_bet_placer.find_best_opportunities()
+        
+        assert len(opps) == 1
+        assert opps[0]['game'] == 'Arsenal @ Chelsea'
+
+
+class TestRunBetCycle:
+    """Test run_bet_cycle function for placing multiple bets"""
+    
+    @pytest.mark.asyncio
+    @patch('scripts.auto_bet_placer.run_bet_cycle')
+    async def test_run_bet_cycle_single_bet_success(self, mock_run_bet_cycle):
+        """Test single bet cycle placement"""
+        # Mock run_bet_cycle to return success
+        mock_run_bet_cycle.return_value = 1
+        
+        result = await mock_run_bet_cycle(
+            dry_run=False,
+            paper_trade=False,
+            placer=Mock(),
+            max_bets=None
+        )
+        
+        assert result == 1
+        mock_run_bet_cycle.assert_called_once()
+    
+    @pytest.mark.asyncio
+    @patch('scripts.auto_bet_placer.run_bet_cycle')
+    async def test_run_bet_cycle_multiple_bets(self, mock_run_bet_cycle):
+        """Test multiple bets in one cycle"""
+        # Mock run_bet_cycle to return 3 bets placed
+        mock_run_bet_cycle.return_value = 3
+        
+        result = await mock_run_bet_cycle(
+            dry_run=False,
+            paper_trade=False,
+            placer=Mock(),
+            max_bets=5
+        )
+        
+        assert result == 3
+        mock_run_bet_cycle.assert_called_once()
+    
+    @pytest.mark.asyncio
+    @patch('scripts.auto_bet_placer.run_bet_cycle')
+    async def test_run_bet_cycle_no_opportunities(self, mock_run_bet_cycle):
+        """Test cycle with no opportunities found"""
+        # Mock run_bet_cycle to return 0 bets
+        mock_run_bet_cycle.return_value = 0
+        
+        result = await mock_run_bet_cycle(
+            dry_run=False,
+            paper_trade=False,
+            placer=Mock(),
+            max_bets=5
+        )
+        
+        assert result == 0
+        mock_run_bet_cycle.assert_called_once()
+
+
+class TestPlaceSpecificBet:
+    """Test placing a specific bet opportunity"""
+    
+    @pytest.mark.asyncio
+    @patch('scripts.auto_bet_placer.BookmakerCredentials')
+    async def test_place_specific_bet_dry_run(self, mock_credentials, auto_bet_placer):
+        """Test dry run doesn't actually place bet"""
+        # Mock credentials
+        mock_credentials.get_credentials.return_value = {
+            'username': 'testuser',
+            'password': 'testpass'
+        }
+        
+        opportunity = {
+            'sport': 'soccer_epl',
+            'game': 'Arsenal @ Chelsea',
+            'market': 'h2h',
+            'outcome': 'Arsenal',
+            'bookmaker': 'Bet365',
+            'bookmaker_key': 'bet365',
+            'odds': 2.5,
+            'ev_percentage': 5.0,
+            'expected_profit': 10.0,
+            'bookmaker_url': 'https://bet365.com',
+            'kelly_stake': {'recommended_stake': 50.0}
+        }
+        
+        # Mock execute_bet_placement - should not be called
+        auto_bet_placer._execute_bet_placement = AsyncMock()
+        
+        result = await auto_bet_placer.place_specific_bet(opportunity, dry_run=True)
+        
+        assert result['success'] is True
+        assert 'Dry run' in result['message']
+        auto_bet_placer._execute_bet_placement.assert_not_called()
+    
+    @pytest.mark.asyncio
+    @patch('scripts.auto_bet_placer.BookmakerCredentials')
+    async def test_place_specific_bet_paper_trade(self, mock_credentials, auto_bet_placer):
+        """Test paper trade logs but doesn't place bet"""
+        # Mock credentials
+        mock_credentials.get_credentials.return_value = {
+            'username': 'testuser',
+            'password': 'testpass'
+        }
+        
+        opportunity = {
+            'sport': 'soccer_epl',
+            'game': 'Arsenal @ Chelsea',
+            'market': 'h2h',
+            'outcome': 'Arsenal',
+            'bookmaker': 'Bet365',
+            'bookmaker_key': 'bet365',
+            'odds': 2.5,
+            'ev_percentage': 5.0,
+            'expected_profit': 10.0,
+            'bookmaker_url': 'https://bet365.com',
+            'kelly_stake': {'recommended_stake': 50.0}
+        }
+        
+        # Enable paper trade mode
+        auto_bet_placer.paper_trade = True
+        auto_bet_placer._execute_bet_placement = AsyncMock()
+        
+        result = await auto_bet_placer.place_specific_bet(opportunity, dry_run=False)
+        
+        assert result['success'] is True
+        assert result['paper_trade'] is True
+        assert 'Paper trade' in result['message']
+        auto_bet_placer._execute_bet_placement.assert_not_called()
+    
+    @pytest.mark.asyncio
+    async def test_place_specific_bet_missing_credentials(self, auto_bet_placer):
+        """Test error when credentials are missing"""
+        opportunity = {
+            'sport': 'soccer_epl',
+            'game': 'Arsenal @ Chelsea',
+            'market': 'h2h',
+            'outcome': 'Arsenal',
+            'bookmaker': 'Bet365',
+            'bookmaker_key': 'bet365',
+            'odds': 2.5,
+            'ev_percentage': 5.0,
+            'expected_profit': 10.0,
+            'bookmaker_url': 'https://bet365.com',
+            'kelly_stake': {'recommended_stake': 50.0}
+        }
+        
+        # No credentials set - should fail
+        result = await auto_bet_placer.place_specific_bet(opportunity, dry_run=False)
+        
+        assert result['success'] is False
+        assert 'Credentials not found' in result['message']
+
+
 class TestDescribeBet:
     """Test bet description generation"""
     

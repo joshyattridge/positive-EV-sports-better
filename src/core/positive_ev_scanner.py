@@ -14,6 +14,7 @@ import pickle
 from pathlib import Path
 from dotenv import load_dotenv
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.core.kelly_criterion import KellyCriterion
 from src.utils.bet_logger import BetLogger
 from src.utils.bet_repository import BetRepository
@@ -96,11 +97,17 @@ class PositiveEVScanner:
         # Build optimized bookmakers list (your betting bookmakers + sharp books)
         self.optimized_bookmakers = list(set(self.betting_bookmakers + self.sharp_books))
         
-        # Persistent file-based caching for odds data (5 minute cache)
+        # Persistent file-based caching for odds data (30 minute cache)
         self._cache_file = Path('data/.odds_cache.pkl')
         self._cache_file.parent.mkdir(exist_ok=True)
-        self._cache_duration = 300  # 5 minutes in seconds
+        self._cache_duration = 1800  # 30 minutes in seconds
         self._odds_cache = self._load_cache()
+        
+        # Concurrent request settings
+        # 10 concurrent workers - aggressive but safe based on API rate limiting
+        # The API uses burst protection (429 status) rather than hard limits
+        # If you hit 429 errors, the requests module will automatically handle retries
+        self.max_concurrent_requests = 10
         
         # Sorting configuration - read from env or use defaults
         self.order_by = os.getenv('ORDER_BY', 'expected_profit').lower()
@@ -192,14 +199,15 @@ class PositiveEVScanner:
         Returns:
             List of games with odds from multiple bookmakers
         """
-        # Check cache first (5 minute cache)
+        # Check cache first (30 minute cache)
         cache_key = f"{sport}_{markets}"
         current_time = time.time()
         
         if cache_key in self._odds_cache:
             cached_data, cache_time = self._odds_cache[cache_key]
             if current_time - cache_time < self._cache_duration:
-                print(f"💾 Using cached odds for {sport} (cached {int(current_time - cache_time)}s ago)")
+                cache_age_minutes = int((current_time - cache_time) / 60)
+                print(f"💾 Using cached odds for {sport} (cached {cache_age_minutes}m ago)")
                 return cached_data
         
         url = f"{self.base_url}/sports/{sport}/odds"
@@ -490,7 +498,7 @@ class PositiveEVScanner:
     
     def scan_all_sports(self, sport_keys: Optional[List[str]] = None) -> Dict[str, List[Dict]]:
         """
-        Scan multiple sports for +EV opportunities.
+        Scan multiple sports for +EV opportunities using concurrent requests.
         
         Args:
             sport_keys: List of sport keys to scan, or None to read from env
@@ -505,13 +513,26 @@ class PositiveEVScanner:
         
         all_opportunities = {}
         
-        for sport in sport_keys:
-            opportunities = self.find_positive_ev_opportunities(sport, markets=self.markets)
-            if opportunities:
-                all_opportunities[sport] = opportunities
+        # Use ThreadPoolExecutor for concurrent scanning
+        print(f"🚀 Scanning {len(sport_keys)} sports with up to {self.max_concurrent_requests} concurrent requests...")
+        
+        with ThreadPoolExecutor(max_workers=self.max_concurrent_requests) as executor:
+            # Submit all sports for concurrent processing
+            future_to_sport = {
+                executor.submit(self.find_positive_ev_opportunities, sport, self.markets): sport 
+                for sport in sport_keys
+            }
             
-            # Small delay to avoid rate limiting
-            time.sleep(0.5)
+            # Collect results as they complete
+            for future in as_completed(future_to_sport):
+                sport = future_to_sport[future]
+                try:
+                    opportunities = future.result()
+                    if opportunities:
+                        all_opportunities[sport] = opportunities
+                        print(f"✓ {sport}: Found {len(opportunities)} opportunities")
+                except Exception as e:
+                    print(f"⚠️  Error scanning {sport}: {e}")
         
         return all_opportunities
     
