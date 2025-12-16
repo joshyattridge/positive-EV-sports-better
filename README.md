@@ -305,6 +305,7 @@ The project includes a convenient helper script that automatically uses the corr
 Test your strategy with real market data without risking money. See [PAPER_TRADING.md](PAPER_TRADING.md) for full documentation.
 
 **Quick start:**
+
 ```bash
 # Single paper trade
 ./run.sh auto-bet --paper-trade
