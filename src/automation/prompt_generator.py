@@ -102,11 +102,21 @@ class BetPlacementPromptGenerator:
 
 ⚠️ IMPORTANT NOTES:
 - Only proceed if odds are {odds:.2f} or BETTER (higher decimal odds)
-- If odds have changed to worse than {odds:.2f}, STOP and report
 - Double-check all details before placing the bet
 - If you encounter any popups or cookie consent, handle them appropriately
 - If the website layout is different than expected, adapt and find the relevant elements
-- Report any errors or issues clearly
+
+🚫 DO NOT PLACE BET IF:
+- Odds worse than {odds:.2f}
+- Stake £{stake:.2f} below minimum or above maximum limits
+- Insufficient account funds (DO NOT attempt to deposit - just fail and report)
+- Market suspended or selection unavailable
+- Login fails or account restricted
+- Any error messages in bet slip
+- Site unresponsive (>30 seconds)
+
+For ANY error: Report FAILURE with specific details and DO NOT place the bet.
+NEVER attempt to deposit funds - only work with existing account balance.
 
 ACTION_SUCCESS: place_bet_for_{opportunity['bookmaker_key']}
 """
