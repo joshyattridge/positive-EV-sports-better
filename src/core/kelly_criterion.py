@@ -74,6 +74,15 @@ class KellyCriterion:
         p = true_probability
         q = 1 - p
         
+        # Guard against invalid odds (odds must be > 1.0)
+        # If odds are 1.0 or less, there's no profit potential
+        if b <= 0:
+            return {
+                'kelly_percentage': 0.0,
+                'recommended_stake': 0.0,
+                'bankroll': self.bankroll
+            }
+        
         # Calculate Kelly percentage
         kelly_percentage = ((b * p) - q) / b
         
