@@ -191,6 +191,7 @@ class PositiveEVScanner:
     def get_odds(self, sport: str, markets: str = 'h2h') -> List[Dict]:
         """
         Get odds for a specific sport with caching and optimization.
+        Handles invalid markets gracefully by retrying with valid markets only.
         
         Args:
             sport: Sport key (e.g., 'americanfootball_nfl')
@@ -241,6 +242,81 @@ class PositiveEVScanner:
             self._save_cache()
             
             return data
+        except requests.exceptions.HTTPError as e:
+            # Handle 422 error (invalid market for sport) by retrying with valid markets
+            if e.response.status_code == 422:
+                market_list = [m.strip() for m in markets.split(',')]
+                if len(market_list) > 1:
+                    print(f"⚠️  Some markets not available for {sport}, trying individual markets...")
+                    
+                    # Try each market individually
+                    all_games = []
+                    successful_markets = []
+                    
+                    for market in market_list:
+                        try:
+                            params['markets'] = market
+                            response = requests.get(url, params=params)
+                            response.raise_for_status()
+                            
+                            games = response.json()
+                            if games:
+                                # Merge games data (avoiding duplicates by game ID)
+                                if not all_games:
+                                    all_games = games
+                                    successful_markets.append(market)
+                                else:
+                                    # Merge bookmaker data for existing games
+                                    game_dict = {g['id']: g for g in all_games}
+                                    for game in games:
+                                        if game['id'] in game_dict:
+                                            # Merge bookmakers for this game
+                                            existing_game = game_dict[game['id']]
+                                            for bookmaker in game.get('bookmakers', []):
+                                                # Check if this bookmaker already exists
+                                                existing_bookmaker = next(
+                                                    (b for b in existing_game.get('bookmakers', []) 
+                                                     if b['key'] == bookmaker['key']),
+                                                    None
+                                                )
+                                                if existing_bookmaker:
+                                                    # Merge markets
+                                                    existing_bookmaker['markets'].extend(bookmaker.get('markets', []))
+                                                else:
+                                                    # Add new bookmaker
+                                                    existing_game.setdefault('bookmakers', []).append(bookmaker)
+                                        else:
+                                            # Add new game
+                                            all_games.append(game)
+                                            game_dict[game['id']] = game
+                                    successful_markets.append(market)
+                        except requests.exceptions.HTTPError as market_error:
+                            if market_error.response.status_code == 422:
+                                print(f"   ⊗ Market '{market}' not available for {sport}")
+                            else:
+                                print(f"   ⚠️  Error fetching market '{market}': {market_error}")
+                        except Exception as market_error:
+                            print(f"   ⚠️  Error fetching market '{market}': {market_error}")
+                    
+                    if all_games:
+                        if successful_markets:
+                            print(f"   ✓ Successfully fetched markets: {', '.join(successful_markets)}")
+                        
+                        # Cache with successful markets only
+                        success_cache_key = f"{sport}_{'_'.join(successful_markets)}"
+                        self._odds_cache[success_cache_key] = (all_games, current_time)
+                        self._save_cache()
+                        
+                        return all_games
+                    else:
+                        print(f"⚠️  No valid markets available for {sport}")
+                        return []
+                else:
+                    print(f"⚠️  Market '{markets}' not available for {sport}")
+                    return []
+            else:
+                print(f"Error fetching odds for {sport}: {e}")
+                return []
         except Exception as e:
             print(f"Error fetching odds for {sport}: {e}")
             return []
@@ -356,10 +432,13 @@ class PositiveEVScanner:
             if not bookmakers:
                 continue
             
-            # Process each market (h2h, spreads, totals)
-            for market_type in ['h2h', 'spreads', 'totals']:
+            # Process each market type from config (e.g., h2h, spreads, totals, h2h_3_way)
+            markets_list = [m.strip() for m in self.markets.split(',')]
+            for market_type in markets_list:
                 # Get all outcomes for this market across all bookmakers
                 market_data = {}
+                # Track number of outcomes per bookmaker to separate 2-way from 3-way markets
+                bookmaker_outcome_counts = {}
                 
                 for bookmaker in bookmakers:
                     # Get bookmaker-level link (least specific)
@@ -369,6 +448,10 @@ class PositiveEVScanner:
                         if market['key'] == market_type:
                             # Get market link (more specific)
                             market_link = market.get('link')
+                            
+                            # Track outcome count for this bookmaker's market
+                            outcome_count = len(market.get('outcomes', []))
+                            bookmaker_outcome_counts[bookmaker['key']] = outcome_count
                             
                             for outcome in market.get('outcomes', []):
                                 outcome_key = outcome['name']
@@ -388,13 +471,27 @@ class PositiveEVScanner:
                                     'bookmaker': bookmaker['key'],
                                     'title': bookmaker['title'],
                                     'odds': outcome['price'],
-                                    'link': best_link  # Use most specific link available
+                                    'link': best_link,  # Use most specific link available
+                                    'outcome_count': outcome_count  # Track for filtering
                                 })
                 
                 # Analyze each outcome
                 for outcome_name, odds_list in market_data.items():
-                    # Get sharp book average as baseline
-                    sharp_odds = [o['odds'] for o in odds_list if o['bookmaker'] in self.sharp_books]
+                    # Determine the most common outcome count for this market
+                    # This ensures we compare 2-way with 2-way and 3-way with 3-way
+                    outcome_counts = [o.get('outcome_count', 0) for o in odds_list]
+                    if not outcome_counts:
+                        continue
+                    
+                    # Use the most common outcome count (2-way or 3-way)
+                    from collections import Counter
+                    most_common_count = Counter(outcome_counts).most_common(1)[0][0]
+                    
+                    # Filter to only include bookmakers with matching outcome count
+                    filtered_odds_list = [o for o in odds_list if o.get('outcome_count', 0) == most_common_count]
+                    
+                    # Get sharp book average as baseline (only from matching outcome count)
+                    sharp_odds = [o['odds'] for o in filtered_odds_list if o['bookmaker'] in self.sharp_books]
                     
                     if not sharp_odds:
                         continue
@@ -402,8 +499,8 @@ class PositiveEVScanner:
                     sharp_avg = sum(sharp_odds) / len(sharp_odds)
                     true_probability = calculate_implied_probability(sharp_avg)
                     
-                    # Check each bookmaker's odds
-                    for odds_data in odds_list:
+                    # Check each bookmaker's odds (only those with matching outcome count)
+                    for odds_data in filtered_odds_list:
                         if odds_data['bookmaker'] in self.sharp_books:
                             continue  # Skip the sharp books themselves
                         
