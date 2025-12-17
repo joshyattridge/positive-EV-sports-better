@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import json
 import time
 import hashlib
+import csv
 from pathlib import Path
 from src.core.positive_ev_scanner import PositiveEVScanner
 from src.utils.odds_utils import calculate_implied_probability, calculate_ev
@@ -216,8 +217,9 @@ class HistoricalBacktester:
         original_skip_setting = self.scanner.skip_already_bet_games
         self.scanner.skip_already_bet_games = False
         
-        # Update scanner's Kelly bankroll to current bankroll
-        self.scanner.kelly.bankroll = self.current_bankroll
+        # Keep scanner's Kelly bankroll at initial value (don't update with current bankroll)
+        # This ensures consistent bet sizing throughout the backtest
+        self.scanner.kelly.bankroll = self.initial_bankroll
         
         # Transform historical data into the format expected by scanner
         # The scanner expects games with bookmakers array
@@ -413,7 +415,7 @@ class HistoricalBacktester:
     
     def place_bet(self, bet: Dict, result: Optional[str] = None, bet_timestamp: Optional[str] = None):
         """
-        Simulate placing a bet and update bankroll.
+        Simulate placing a bet and track profit/loss (bankroll stays at initial value for sizing).
         
         Args:
             bet: Bet details
@@ -435,7 +437,7 @@ class HistoricalBacktester:
         
         bet['result'] = result
         bet['actual_profit'] = actual_profit
-        bet['bankroll_after'] = self.current_bankroll
+        bet['bankroll_after'] = self.current_bankroll  # Cumulative P&L, but bet sizing uses initial bankroll
         
         self.bets_placed.append(bet)
         
@@ -692,6 +694,9 @@ class HistoricalBacktester:
         
         print(f"\nRisk Metrics:")
         print(f"  Max Drawdown: £{max_drawdown:.2f} ({max_drawdown_pct:.2f}%)")
+        
+        # Export bets to CSV
+        self.export_bets_to_csv()
         
         # Show per-sport breakdown if multiple sports
         sports_in_bets = set(b.get('sport') for b in settled_bets if b.get('sport'))
@@ -1093,6 +1098,81 @@ class HistoricalBacktester:
         print(f"\n{'='*80}\n")
         
         return aggregate
+    
+    def export_bets_to_csv(self, filename: str = 'data/backtest_bet_history.csv'):
+        """
+        Export all placed bets to a CSV file.
+        
+        Args:
+            filename: Path to save the CSV file
+        """
+        if not self.bets_placed:
+            print("⚠️  No bets to export")
+            return
+        
+        # Ensure directory exists
+        Path(filename).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Define CSV headers (similar to BetLogger)
+        headers = [
+            'timestamp',
+            'date_placed',
+            'game_id',
+            'sport',
+            'game',
+            'commence_time',
+            'market',
+            'outcome',
+            'bookmaker',
+            'bookmaker_key',
+            'bet_odds',
+            'sharp_avg_odds',
+            'true_probability_pct',
+            'ev_percentage',
+            'bankroll',
+            'kelly_percentage',
+            'recommended_stake',
+            'expected_profit',
+            'bet_result',
+            'actual_profit_loss',
+            'bankroll_after'
+        ]
+        
+        try:
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=headers)
+                writer.writeheader()
+                
+                for bet in self.bets_placed:
+                    row = {
+                        'timestamp': bet.get('bet_placed_at', ''),
+                        'date_placed': bet.get('bet_placed_at', '')[:10] if bet.get('bet_placed_at') else '',
+                        'game_id': bet.get('game_id', ''),
+                        'sport': bet.get('sport', ''),
+                        'game': bet.get('game', ''),
+                        'commence_time': bet.get('commence_time', ''),
+                        'market': bet.get('market', ''),
+                        'outcome': bet.get('outcome', ''),
+                        'bookmaker': bet.get('bookmaker', ''),
+                        'bookmaker_key': bet.get('bookmaker_key', ''),
+                        'bet_odds': bet.get('odds', 0),
+                        'sharp_avg_odds': bet.get('sharp_avg_odds', 0),
+                        'true_probability_pct': bet.get('true_probability', 0) * 100,
+                        'ev_percentage': bet.get('ev', 0) * 100,
+                        'bankroll': self.initial_bankroll,  # Always initial bankroll for sizing
+                        'kelly_percentage': bet.get('kelly_pct', 0) * 100,
+                        'recommended_stake': bet.get('stake', 0),
+                        'expected_profit': bet.get('expected_profit', 0),
+                        'bet_result': bet.get('result', 'pending'),
+                        'actual_profit_loss': bet.get('actual_profit', 0),
+                        'bankroll_after': bet.get('bankroll_after', 0)
+                    }
+                    writer.writerow(row)
+            
+            print(f"💾 Exported {len(self.bets_placed)} bets to {filename}")
+            
+        except Exception as e:
+            print(f"❌ Error exporting bets to CSV: {e}")
     
     def save_results(self, results: Dict, filename: str = 'backtest_results.json'):
         """Save backtest results to file."""
