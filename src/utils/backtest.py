@@ -20,6 +20,7 @@ from src.core.positive_ev_scanner import PositiveEVScanner
 from src.utils.odds_utils import calculate_implied_probability, calculate_ev
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from tqdm import tqdm
 
 load_dotenv()
 
@@ -110,7 +111,6 @@ class HistoricalBacktester:
         cached_data = self._load_from_cache(cache_key)
         
         if cached_data:
-            print(f"  💾 Loaded from cache")
             return (cached_data, True)
         
         # Fetch from API
@@ -515,13 +515,19 @@ class HistoricalBacktester:
         print("\n📋 Using simulated results based on true win probabilities\n")
         scores_data = {}
         
-        print("Scanning historical odds snapshots...\n")
+        # Calculate total snapshots for progress bar
+        total_seconds = (end - start).total_seconds()
+        interval_seconds = snapshot_interval_hours * 3600
+        total_snapshots = int(total_seconds / interval_seconds) + 1
+        
+        # Create progress bar with finer granularity (update per sport processed)
+        total_iterations = total_snapshots * len(sports)
+        pbar = tqdm(total=total_iterations, desc="Backtesting", unit="check", ncols=120, 
+                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
         
         while current <= end:
             snapshot_count += 1
             timestamp = current.strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-            print(f"[{snapshot_count}] Snapshot: {timestamp}")
             
             # Collect opportunities from all sports for this timestamp
             all_opportunities = []
@@ -544,6 +550,10 @@ class HistoricalBacktester:
                         opp['sport'] = sport
                     
                     all_opportunities.extend(opportunities)
+                
+                # Update progress bar after each sport
+                pbar.update(1)
+                pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities})
             
             # Smart rate limiting - only wait if we made actual API calls
             if any_api_calls:
@@ -558,9 +568,8 @@ class HistoricalBacktester:
                         self.games_bet_on.add(opp['game_id'])
                 
                 if new_opportunities:
-                    filtered_count = len(all_opportunities) - len(new_opportunities)
-                    print(f"  Found {len(new_opportunities)} +EV opportunities ({filtered_count} filtered - already bet)")
                     total_opportunities += len(new_opportunities)
+                    pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities})
                     
                     # Batch process all bets for this snapshot
                     import random
@@ -591,14 +600,15 @@ class HistoricalBacktester:
                     if pending_count > 0:
                         print(f"    Placed {len(new_opportunities)} bets: {won_count}W-{lost_count}L-{pending_count}P | Bankroll: £{self.current_bankroll:.2f}")
                     else:
-                        print(f"    Placed {len(new_opportunities)} bets: {won_count}W-{lost_count}L | Bankroll: £{self.current_bankroll:.2f}")
-                else:
-                    print(f"  No +EV opportunities found (all filtered - already bet)")
-            else:
-                print(f"  No +EV opportunities found")
+                        # Update postfix with latest stats
+                        pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities, 
+                                        'bankroll': f'£{self.current_bankroll:.0f}'})
             
             # Move to next snapshot
             current += timedelta(hours=snapshot_interval_hours)
+        
+        # Close progress bar
+        pbar.close()
         
         print(f"\n{'='*80}")
         print(f"BACKTEST COMPLETE")
@@ -1271,7 +1281,8 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     start = datetime.fromisoformat(start_date)
     end = datetime.fromisoformat(end_date)
     days = (end - start).days
-    snapshots = int((days * 24) / args.interval)
+    total_hours = days * 24
+    snapshots = int(total_hours / args.interval) + 1
     cost_per_sport = snapshots * 10
     total_cost = cost_per_sport * len(sports)
     
