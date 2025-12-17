@@ -100,7 +100,7 @@ class PositiveEVScanner:
         # Persistent file-based caching for odds data (30 minute cache)
         self._cache_file = Path('data/.odds_cache.pkl')
         self._cache_file.parent.mkdir(exist_ok=True)
-        self._cache_duration = 1800  # 30 minutes in seconds
+        self._cache_duration = 60  # 1 minute in seconds
         self._odds_cache = self._load_cache()
         
         # Concurrent request settings
