@@ -88,14 +88,27 @@ class BrowserAutomation:
         if self.headless:
             args.append("--headless")
         
-        # Use user-data-dir for persistent browser profile
-        # This captures EVERYTHING including HttpOnly cookies
-        if self.use_persistent_profile and self.current_state_file:
-            # Use the state file path's stem as the profile directory name
-            profile_dir = self.state_dir / f"{self.current_state_file.stem}_profile"
-            profile_dir.mkdir(exist_ok=True)
-            args.extend(["--user-data-dir", str(profile_dir)])
-            print(f"🔐 Using persistent browser profile: {profile_dir}")
+        # Set executable path to Playwright's installed chromium
+        # Check for Docker/Linux environment vs local Mac
+        chromium_path = "/root/.cache/ms-playwright/chromium-1200/chrome-linux/chrome"
+        if not os.path.exists(chromium_path):
+            # Try Mac path or let Playwright find it automatically
+            chromium_path = os.path.expanduser("~/.cache/ms-playwright/chromium-1200/chrome-mac/Chromium.app/Contents/MacOS/Chromium")
+            if not os.path.exists(chromium_path):
+                # Let Playwright find chromium automatically
+                chromium_path = None
+        
+        if chromium_path:
+            args.extend(["--executable-path", chromium_path])
+            print(f"🌐 Using Chromium at: {chromium_path}")
+        
+        # Use isolated mode to avoid browser locks between runs
+        # Trade-off: Don't persist session between runs, but avoid lock issues
+        args.append("--isolated")
+        
+        # Disable sandbox when running as root (Docker containers)
+        args.append("--no-sandbox")
+        print("🔓 Using isolated browser mode with sandbox disabled (Docker/root environment)")
         
         server_params = StdioServerParameters(
             command="npx",

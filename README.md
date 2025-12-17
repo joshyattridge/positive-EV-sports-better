@@ -196,23 +196,24 @@ docker build -t positive-ev-sports-better .
 **Run any command:**
 
 ```bash
+# Note: Add --env-file .env to load your API keys and configuration
 # Scan for opportunities
-docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh scan
+docker run --rm --env-file .env -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh scan
 
 # Auto-bet with dry run
-docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh auto-bet --dry-run
+docker run --rm --env-file .env -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh auto-bet --dry-run
 
 # Paper trade continuously every 15 minutes
-docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh auto-bet --paper-trade --interval 15
+docker run --rm --env-file .env -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh auto-bet --paper-trade --interval 15
 
 # View bet summary
-docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh bets summary
+docker run --rm --env-file .env -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh bets summary
 
 # Settle bets automatically
-docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh bets settle
+docker run --rm --env-file .env -v "$(pwd)/data:/app/data" positive-ev-sports-better ./run.sh bets settle
 
 # Run default command (auto-bet placer)
-docker run --rm -v "$(pwd)/data:/app/data" positive-ev-sports-better
+docker run --rm --env-file .env -v "$(pwd)/data:/app/data" positive-ev-sports-better
 ```
 
 **Using docker-compose:**

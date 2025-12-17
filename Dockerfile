@@ -1,10 +1,8 @@
 # Use Python 3.12 slim image as base
 FROM python:3.12-slim
 
-# Install system dependencies for Chromium and Selenium
+# Install system dependencies for Playwright (without chromium package to avoid conflicts)
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-driver \
     wget \
     curl \
     xvfb \
@@ -44,6 +42,11 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Playwright and its browsers
+RUN pip install playwright && \
+    playwright install chromium && \
+    playwright install-deps chromium
+
 # Copy the rest of the application
 COPY . .
 
@@ -53,6 +56,7 @@ RUN mkdir -p data/backtest_cache data/browser_states
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
+ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 # Expose any ports if needed (optional)
 # EXPOSE 8000

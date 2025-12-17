@@ -5,8 +5,15 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
 
-# Check if venv exists
-if [ ! -f "$VENV_PYTHON" ]; then
+# Check if running in Docker (no venv needed) or use venv
+if [ -f "/.dockerenv" ] || [ -n "$DOCKER_CONTAINER" ]; then
+    # Running in Docker - use system Python
+    PYTHON_CMD="python3"
+elif [ -f "$VENV_PYTHON" ]; then
+    # Running locally with venv
+    PYTHON_CMD="$VENV_PYTHON"
+else
+    # No venv found and not in Docker
     echo "❌ Virtual environment not found!"
     echo "Please run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
     exit 1
@@ -54,29 +61,29 @@ shift
 case $COMMAND in
     scan)
         echo "🔍 Scanning for +EV opportunities..."
-        $VENV_PYTHON -m src.core.positive_ev_scanner "$@"
+        $PYTHON_CMD -m src.core.positive_ev_scanner "$@"
         ;;
     auto-bet)
         echo "🤖 Running automated bet placer..."
-        $VENV_PYTHON scripts/auto_bet_placer.py "$@"
+        $PYTHON_CMD scripts/auto_bet_placer.py "$@"
         ;;
     bets)
-        $VENV_PYTHON scripts/manage_bets.py "$@"
+        $PYTHON_CMD scripts/manage_bets.py "$@"
         ;;
     paper)
         # Paper trading commands - route to manage_bets with paper trade flag
         # Shift to get the subcommand and pass it before --paper-trade
         SUBCMD=$1
         shift
-        $VENV_PYTHON scripts/manage_bets.py "$SUBCMD" --paper-trade "$@"
+        $PYTHON_CMD scripts/manage_bets.py "$SUBCMD" --paper-trade "$@"
         ;;
     backtest)
         echo "📊 Running backtest..."
-        $VENV_PYTHON -m src.utils.backtest "$@"
+        $PYTHON_CMD -m src.utils.backtest "$@"
         ;;
     ignored)
         echo "🚫 Showing ignored bets..."
-        $VENV_PYTHON scripts/show_ignored_bets.py "$@"
+        $PYTHON_CMD scripts/show_ignored_bets.py "$@"
         ;;
     *)
         echo "❌ Unknown command: $COMMAND"
