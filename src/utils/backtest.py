@@ -1033,9 +1033,6 @@ class HistoricalBacktester:
                 'final_bankroll': self.current_bankroll,
                 'total_return_pct': ((self.current_bankroll - self.initial_bankroll) / self.initial_bankroll) * 100
             })
-            
-            if sim_num % 10 == 0 or sim_num == n_simulations:
-                print(f"  Completed {sim_num}/{n_simulations} simulations...")
         
         # Also add first simulation to all_simulations (use bet placement timestamps)
         self.all_simulations.insert(0, {
