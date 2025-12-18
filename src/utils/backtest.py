@@ -58,6 +58,9 @@ class HistoricalBacktester:
         # Monte Carlo tracking
         self.all_simulations = []  # Store all simulation runs
         
+        # In-memory cache for fast lookups
+        self.memory_cache = {}  # Will be populated by preload_cache()
+        
     def reset_state(self):
         """Reset backtester state for new Monte Carlo run."""
         self.bets_placed = []
@@ -74,12 +77,20 @@ class HistoricalBacktester:
         return hashlib.md5(key_str.encode()).hexdigest()
     
     def _load_from_cache(self, cache_key: str) -> Optional[Dict]:
-        """Load data from cache if it exists."""
+        """Load data from cache if it exists (checks memory first, then disk)."""
+        # Check in-memory cache first
+        if cache_key in self.memory_cache:
+            return self.memory_cache[cache_key]
+        
+        # Fall back to disk if not in memory
         cache_file = self.cache_dir / f"{cache_key}.json"
         if cache_file.exists():
             try:
                 with open(cache_file, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # Store in memory for future access
+                    self.memory_cache[cache_key] = data
+                    return data
             except Exception as e:
                 print(f"  Warning: Failed to load cache: {e}")
                 return None
@@ -91,8 +102,75 @@ class HistoricalBacktester:
         try:
             with open(cache_file, 'w') as f:
                 json.dump(data, f, indent=2)
+            # Also store in memory cache
+            self.memory_cache[cache_key] = data
         except Exception as e:
             print(f"  Warning: Failed to save cache: {e}")
+    
+    def preload_cache(self):
+        """Pre-load all cache files into memory for fast access."""
+        cache_files = list(self.cache_dir.glob('*.json'))
+        if not cache_files:
+            return
+        
+        print(f"\n🔄 Pre-loading {len(cache_files)} cache files into memory...")
+        start_time = time.time()
+        
+        loaded = 0
+        for cache_file in cache_files:
+            try:
+                cache_key = cache_file.stem  # filename without extension
+                with open(cache_file, 'r') as f:
+                    self.memory_cache[cache_key] = json.load(f)
+                loaded += 1
+            except Exception as e:
+                print(f"  Warning: Failed to load {cache_file.name}: {e}")
+        
+        elapsed = time.time() - start_time
+        print(f"✅ Pre-loaded {loaded} cache files in {elapsed:.2f}s")
+        print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
+    
+    def bulk_get_historical_odds(self, sports: List[str], timestamps: List[str], markets: str = 'h2h') -> Dict:
+        """Bulk fetch all historical odds data for multiple sports and timestamps.
+        
+        Args:
+            sports: List of sport keys
+            timestamps: List of ISO timestamps
+            markets: Markets to query
+            
+        Returns:
+            Dictionary mapping (sport, timestamp) -> (data, was_cached)
+        """
+        total_lookups = len(sports) * len(timestamps)
+        print(f"\n📦 Bulk fetching {total_lookups} historical odds snapshots...")
+        start_time = time.time()
+        
+        results = {}
+        cache_hits = 0
+        cache_misses = 0
+        
+        for sport in sports:
+            for timestamp in timestamps:
+                cache_key = self._get_cache_key(sport, timestamp, markets)
+                
+                # Direct memory cache lookup (skip function call overhead)
+                if cache_key in self.memory_cache:
+                    results[(sport, timestamp)] = (self.memory_cache[cache_key], True)
+                    cache_hits += 1
+                else:
+                    # Would need API call - skip for now
+                    results[(sport, timestamp)] = (None, False)
+                    cache_misses += 1
+        
+        elapsed = time.time() - start_time
+        hit_rate = (cache_hits / total_lookups * 100) if total_lookups > 0 else 0
+        print(f"✅ Bulk fetch complete in {elapsed:.3f}s")
+        print(f"   Cache hits: {cache_hits}/{total_lookups} ({hit_rate:.1f}%)")
+        if cache_misses > 0:
+            print(f"   ⚠️  Cache misses: {cache_misses} (these will be skipped)")
+        print()
+        
+        return results
         
     def get_historical_odds(self, sport: str, date: str, markets: str = 'h2h') -> Optional[tuple]:
         """
@@ -389,6 +467,9 @@ class HistoricalBacktester:
         print(f"One Bet Per Game: {self.scanner.one_bet_per_game}")
         print(f"{'='*80}\n")
         
+        # Pre-load all cache files into memory for faster access
+        self.preload_cache()
+        
         # Parse dates and make them timezone-aware (UTC) for comparison with API data
         from datetime import timezone
         start = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
@@ -407,6 +488,16 @@ class HistoricalBacktester:
         interval_seconds = snapshot_interval_hours * 3600
         total_snapshots = int(total_seconds / interval_seconds) + 1
         
+        # Pre-generate all timestamps
+        all_timestamps = []
+        temp_current = start
+        while temp_current <= end:
+            all_timestamps.append(temp_current.strftime('%Y-%m-%dT%H:%M:%SZ'))
+            temp_current += timedelta(hours=snapshot_interval_hours)
+        
+        # Bulk fetch all historical odds data upfront (eliminates 750 function calls)
+        odds_data_cache = self.bulk_get_historical_odds(sports, all_timestamps)
+        
         # Create progress bar with finer granularity (update per sport processed)
         total_iterations = total_snapshots * len(sports)
         pbar = tqdm(total=total_iterations, desc="Backtesting", unit="check", ncols=120, 
@@ -418,15 +509,11 @@ class HistoricalBacktester:
             
             # Collect opportunities from all sports for this timestamp
             all_opportunities = []
-            any_api_calls = False
             
             for sport in sports:
-                # Get historical odds for this sport
-                result = self.get_historical_odds(sport, timestamp)
-                historical_data, was_cached = result if result else (None, False)
-                
-                if not was_cached:
-                    any_api_calls = True
+                # Direct lookup from bulk-fetched cache (no function call overhead)
+                cache_result = odds_data_cache.get((sport, timestamp))
+                historical_data, was_cached = cache_result if cache_result else (None, False)
                 
                 if historical_data:
                     # Find +EV opportunities using scanner, passing snapshot time for proper filtering
@@ -441,10 +528,6 @@ class HistoricalBacktester:
                 # Update progress bar after each sport
                 pbar.update(1)
                 pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities})
-            
-            # Smart rate limiting - only wait if we made actual API calls
-            if any_api_calls:
-                time.sleep(0.1)  # Reduced from 0.5s for faster execution
             
             if all_opportunities:
                 # Filter out games we've already bet on
