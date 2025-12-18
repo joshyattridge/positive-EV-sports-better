@@ -215,7 +215,10 @@ class HistoricalBacktester:
     
     def find_positive_ev_bets(self, historical_data: Dict, sport: str, snapshot_time: Optional[datetime] = None) -> List[Dict]:
         """
-        Analyze historical odds snapshot to find +EV bets using the scanner.
+        Analyze historical odds snapshot to find +EV bets.
+        
+        This method uses the scanner's analyze_games_for_ev() to ensure the backtest
+        uses exactly the same logic as live scanning.
         
         Args:
             historical_data: Response from historical odds API
@@ -228,147 +231,31 @@ class HistoricalBacktester:
         if not historical_data or 'data' not in historical_data:
             return []
         
-        # Temporarily disable skip_already_bet_games filter for backtesting
-        original_skip_setting = self.scanner.skip_already_bet_games
-        self.scanner.skip_already_bet_games = False
-        
-        # Keep scanner's Kelly bankroll at initial value (don't update with current bankroll)
-        # This ensures consistent bet sizing throughout the backtest
+        # Keep scanner's Kelly bankroll at initial value for consistent bet sizing
         self.scanner.kelly.bankroll = self.initial_bankroll
         
-        # Transform historical data into the format expected by scanner
-        # The scanner expects games with bookmakers array
         games = historical_data['data']
         
-        opportunities = []
+        # Use the scanner's core analysis method with backtest-specific parameters
+        opportunities = self.scanner.analyze_games_for_ev(
+            games=games,
+            sport=sport,
+            already_bet_game_ids=self.games_bet_on,  # Track games bet in this backtest
+            reference_time=snapshot_time  # Use snapshot time instead of current time
+        )
         
-        # Get already-bet game IDs for this backtest run
-        already_bet_game_ids = self.games_bet_on
-        
-        for game in games:
-            game_id = game.get('id', '')
-            
-            # Skip games we've already bet on in this backtest
-            if game_id and game_id in already_bet_game_ids:
-                continue
-            
-            # For backtesting: only skip games that have started relative to snapshot time
-            # For live scanning: skip games that have started relative to current time
-            commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
-            reference_time = snapshot_time if snapshot_time else datetime.now(commence_time.tzinfo)
-            if commence_time <= reference_time:
-                continue
-            
-            home_team = game['home_team']
-            away_team = game['away_team']
-            commence_time_str = commence_time.strftime('%Y-%m-%d %H:%M %Z')
-            
-            bookmakers = game.get('bookmakers', [])
-            if not bookmakers:
-                continue
-            
-            # Process each market
-            for market_type in ['h2h', 'spreads', 'totals']:
-                market_data = {}
-                
-                for bookmaker in bookmakers:
-                    for market in bookmaker.get('markets', []):
-                        if market['key'] == market_type:
-                            for outcome in market.get('outcomes', []):
-                                outcome_key = outcome['name']
-                                if 'point' in outcome:
-                                    outcome_key += f" ({outcome['point']:+.1f})"
-                                
-                                if outcome_key not in market_data:
-                                    market_data[outcome_key] = []
-                                
-                                market_data[outcome_key].append({
-                                    'bookmaker': bookmaker['key'],
-                                    'title': bookmaker['title'],
-                                    'odds': outcome['price']
-                                })
-                
-                # Analyze each outcome using scanner's logic
-                for outcome_name, odds_list in market_data.items():
-                    # Get sharp book average
-                    sharp_odds = [o['odds'] for o in odds_list if o['bookmaker'] in self.scanner.sharp_books]
-                    
-                    if not sharp_odds:
-                        continue
-                    
-                    sharp_avg = sum(sharp_odds) / len(sharp_odds)
-                    true_probability = calculate_implied_probability(sharp_avg)
-                    
-                    # Check each bookmaker's odds
-                    for odds_data in odds_list:
-                        if odds_data['bookmaker'] in self.scanner.sharp_books:
-                            continue
-                        
-                        if odds_data['bookmaker'] not in self.scanner.betting_bookmakers:
-                            continue
-                        
-                        bet_odds = odds_data['odds']
-                        ev = calculate_ev(bet_odds, true_probability)
-                        
-                        # Apply max odds filter from scanner config
-                        if self.scanner.max_odds > 0 and bet_odds > self.scanner.max_odds:
-                            continue
-                        
-                        # Apply scanner's filters
-                        if ev >= self.scanner.min_ev_threshold and true_probability >= self.scanner.min_true_probability:
-                            # Calculate full Kelly first (without fraction) to filter bet quality
-                            kelly_stake_full = self.scanner.kelly.calculate_kelly_stake(
-                                decimal_odds=bet_odds,
-                                true_probability=true_probability,
-                                kelly_fraction=1.0
-                            )
-                            
-                            # Apply minimum Kelly percentage filter
-                            if kelly_stake_full['kelly_percentage'] < (self.scanner.min_kelly_percentage * 100):
-                                continue
-                            
-                            # Now calculate actual stake with Kelly fraction
-                            kelly_stake = self.scanner.kelly.calculate_kelly_stake(
-                                decimal_odds=bet_odds,
-                                true_probability=true_probability,
-                                kelly_fraction=self.scanner.kelly_fraction
-                            )
-                            
-                            expected_profit = self.scanner.kelly.calculate_expected_profit(
-                                stake=kelly_stake['recommended_stake'],
-                                decimal_odds=bet_odds,
-                                true_probability=true_probability
-                            )
-                            
-                            opportunities.append({
-                                'game_id': game_id,
-                                'sport': sport,
-                                'game': f"{away_team} @ {home_team}",
-                                'commence_time': commence_time_str,
-                                'market': market_type,
-                                'outcome': outcome_name,
-                                'bookmaker': odds_data['title'],
-                                'bookmaker_key': odds_data['bookmaker'],
-                                'odds': bet_odds,
-                                'sharp_avg_odds': sharp_avg,
-                                'true_probability': true_probability,
-                                'ev': ev,
-                                'kelly_pct': kelly_stake['kelly_percentage'] / 100,
-                                'stake': kelly_stake['recommended_stake'],
-                                'expected_profit': expected_profit
-                            })
-        
-        # Filter to one bet per game if enabled in scanner config
-        if self.scanner.one_bet_per_game and opportunities:
-            game_bets = {}
-            for opp in opportunities:
-                game_id = opp['game_id']
-                if game_id not in game_bets or opp['ev'] > game_bets[game_id]['ev']:
-                    game_bets[game_id] = opp
-            opportunities = list(game_bets.values())
-        
-        # Restore original setting
-        self.scanner.skip_already_bet_games = original_skip_setting
+        # Convert scanner's output format to backtest format
+        # Scanner returns ev_percentage (0-100), backtest expects ev (0-1)
+        # Scanner returns kelly_stake dict, backtest expects flat fields
+        for opp in opportunities:
+            if 'ev_percentage' in opp:
+                opp['ev'] = opp['ev_percentage'] / 100
+            if 'kelly_stake' in opp:
+                opp['kelly_pct'] = opp['kelly_stake']['kelly_percentage'] / 100
+                opp['stake'] = opp['kelly_stake']['recommended_stake']
+            if 'true_probability' in opp and opp['true_probability'] > 1:
+                # Scanner returns percentage (0-100), backtest expects decimal (0-1)
+                opp['true_probability'] = opp['true_probability'] / 100
         
         return opportunities
     

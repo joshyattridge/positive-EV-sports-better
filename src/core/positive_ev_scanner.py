@@ -363,61 +363,55 @@ class PositiveEVScanner:
             return sum(sharp_odds) / len(sharp_odds)
         return None
     
-    def find_positive_ev_opportunities(self, sport: str, markets: str = 'h2h') -> List[Dict]:
+    def analyze_games_for_ev(self, games: List[Dict], sport: str, 
+                            already_bet_game_ids: Optional[Set[str]] = None,
+                            reference_time: Optional[datetime] = None) -> List[Dict]:
         """
-        Find positive EV opportunities for a sport.
+        Analyze a list of games for +EV opportunities.
+        This is the core analysis logic used by both live scanning and backtesting.
         
         Args:
-            sport: Sport key
-            markets: Markets to analyze
+            games: List of games with odds data
+            sport: Sport key for context
+            already_bet_game_ids: Set of game IDs to skip (or None to use repository)
+            reference_time: Time to use for filtering live games (None = use current time)
             
         Returns:
             List of positive EV opportunities
         """
-        print(f"\n{'='*80}")
-        print(f"Scanning {sport.upper()} for +EV opportunities...")
-        print(f"{'='*80}\n")
-        
-        # First check if there are any events (FREE endpoint)
-        events = self.get_events(sport)
-        if not events:
-            print(f"ℹ️  No upcoming events for {sport}, skipping odds fetch")
-            return []
-        
-        print(f"✓ Found {len(events)} events for {sport}, fetching odds...")
-        games = self.get_odds(sport, markets)
         opportunities = []
         
         if not games:
-            print("No games found or API error.")
             return opportunities
         
-        # Get already-bet game IDs if filtering is enabled
-        already_bet_game_ids: Set[str] = set()
-        if self.skip_already_bet_games:
-            already_bet_game_ids = self.bet_repository.get_already_bet_game_ids()
-            if already_bet_game_ids:
-                print(f"🚫 Filtering out {len(already_bet_game_ids)} games with existing bets")
+        # Use provided game IDs or fetch from repository
+        if already_bet_game_ids is None:
+            already_bet_game_ids = set()
+            if self.skip_already_bet_games:
+                already_bet_game_ids = self.bet_repository.get_already_bet_game_ids()
         
         # Get failed bet opportunities to ignore (if max_failures > 0)
         failed_opportunities = set()
         if self.max_bet_failures > 0:
             failed_opportunities = self.bet_repository.get_failed_bet_opportunities(max_failures=self.max_bet_failures)
         
+        
         for game in games:
             # Get game ID from API
             game_id = game.get('id', '')
             
-            # Skip games that already have bets if filtering is enabled
-            if self.skip_already_bet_games and game_id and game_id in already_bet_game_ids:
-                continue
-            # Skip live games
-            commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
-            if commence_time <= datetime.now(commence_time.tzinfo):
+            # Skip games that already have bets
+            if game_id and game_id in already_bet_game_ids:
                 continue
             
-            # Skip games too far in the future if max_days_ahead is set
-            if self.max_days_ahead > 0:
+            # Skip live games (use reference_time for backtesting, current time for live)
+            commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
+            check_time = reference_time if reference_time else datetime.now(commence_time.tzinfo)
+            if commence_time <= check_time:
+                continue
+            
+            # Skip games too far in the future if max_days_ahead is set (only for live scanning)
+            if self.max_days_ahead > 0 and reference_time is None:
                 now = datetime.now(commence_time.tzinfo)
                 time_until_game = (commence_time - now).total_seconds() / 86400  # Convert to days
                 if time_until_game > self.max_days_ahead:
@@ -592,6 +586,44 @@ class PositiveEVScanner:
                             })
         
         return opportunities
+    
+    def find_positive_ev_opportunities(self, sport: str, markets: str = 'h2h') -> List[Dict]:
+        """
+        Find positive EV opportunities for a sport by fetching live odds.
+        
+        Args:
+            sport: Sport key
+            markets: Markets to analyze
+            
+        Returns:
+            List of positive EV opportunities
+        """
+        print(f"\n{'='*80}")
+        print(f"Scanning {sport.upper()} for +EV opportunities...")
+        print(f"{'='*80}\n")
+        
+        # First check if there are any events (FREE endpoint)
+        events = self.get_events(sport)
+        if not events:
+            print(f"ℹ️  No upcoming events for {sport}, skipping odds fetch")
+            return []
+        
+        print(f"✓ Found {len(events)} events for {sport}, fetching odds...")
+        games = self.get_odds(sport, markets)
+        
+        if not games:
+            print("No games found or API error.")
+            return []
+        
+        # Get already-bet game IDs if filtering is enabled
+        already_bet_game_ids: Set[str] = set()
+        if self.skip_already_bet_games:
+            already_bet_game_ids = self.bet_repository.get_already_bet_game_ids()
+            if already_bet_game_ids:
+                print(f"🚫 Filtering out {len(already_bet_game_ids)} games with existing bets")
+        
+        # Use core analysis method
+        return self.analyze_games_for_ev(games, sport, already_bet_game_ids)
     
     def scan_all_sports(self, sport_keys: Optional[List[str]] = None) -> Dict[str, List[Dict]]:
         """
