@@ -277,8 +277,23 @@ class PositiveEVScanner:
                                                     None
                                                 )
                                                 if existing_bookmaker:
-                                                    # Merge markets
-                                                    existing_bookmaker['markets'].extend(bookmaker.get('markets', []))
+                                                    # Merge markets intelligently - avoid duplicates
+                                                    # Build a dict of existing markets by market key
+                                                    existing_markets_dict = {m['key']: m for m in existing_bookmaker.get('markets', [])}
+                                                    
+                                                    # Add or update markets from new response
+                                                    for new_market in bookmaker.get('markets', []):
+                                                        market_key = new_market['key']
+                                                        if market_key in existing_markets_dict:
+                                                            # Market already exists - replace with newer data
+                                                            # (newer data is more recent since we're fetching markets sequentially)
+                                                            existing_markets_dict[market_key] = new_market
+                                                        else:
+                                                            # New market - add it
+                                                            existing_markets_dict[market_key] = new_market
+                                                    
+                                                    # Replace markets list with deduplicated version
+                                                    existing_bookmaker['markets'] = list(existing_markets_dict.values())
                                                 else:
                                                     # Add new bookmaker
                                                     existing_game.setdefault('bookmakers', []).append(bookmaker)
