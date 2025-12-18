@@ -357,7 +357,11 @@ class PositiveEVScanner:
                             sharp_odds.append(outcome['price'])
         
         if sharp_odds:
-            return sum(sharp_odds) / len(sharp_odds)
+            # CRITICAL: Average the probabilities, not the odds!
+            sharp_probabilities = [calculate_implied_probability(odds) for odds in sharp_odds]
+            avg_probability = sum(sharp_probabilities) / len(sharp_probabilities)
+            # Return as odds for backward compatibility
+            return 1 / avg_probability if avg_probability > 0 else None
         return None
     
     def analyze_games_for_ev(self, games: List[Dict], sport: str, 
@@ -487,8 +491,13 @@ class PositiveEVScanner:
                     if not sharp_odds:
                         continue
                     
-                    sharp_avg = sum(sharp_odds) / len(sharp_odds)
-                    true_probability = calculate_implied_probability(sharp_avg)
+                    # CRITICAL: Average the probabilities, not the odds!
+                    # Averaging odds is mathematically incorrect and creates false +EV
+                    sharp_probabilities = [calculate_implied_probability(odds) for odds in sharp_odds]
+                    true_probability = sum(sharp_probabilities) / len(sharp_probabilities)
+                    
+                    # Convert average probability back to odds for display purposes
+                    sharp_avg_odds = 1 / true_probability if true_probability > 0 else 0
                     
                     # Check each bookmaker's odds (only those with matching outcome count)
                     for odds_data in filtered_odds_list:
@@ -572,7 +581,7 @@ class PositiveEVScanner:
                                 'bookmaker': odds_data['title'],
                                 'bookmaker_key': odds_data['bookmaker'],
                                 'odds': bet_odds,
-                                'sharp_avg_odds': sharp_avg,
+                                'sharp_avg_odds': sharp_avg_odds,
                                 'ev_percentage': ev * 100,
                                 'true_probability': true_probability * 100,
                                 'bookmaker_probability': bookmaker_probability * 100,

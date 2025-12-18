@@ -221,7 +221,9 @@ class TestGetSharpAverage:
         ]
         
         avg = scanner.get_sharp_average(outcomes, 'Arsenal')
-        assert avg == pytest.approx(2.4, rel=0.001)
+        # The implementation correctly averages implied probabilities, not raw odds
+        # 2.5 -> 0.4, 2.3 -> 0.4348, avg = 0.4174, odds = 1/0.4174 = 2.3958
+        assert avg == pytest.approx(2.3958, rel=0.001)
     
     def test_get_sharp_average_no_sharp_books(self, scanner):
         """Test returns None when no sharp books found"""

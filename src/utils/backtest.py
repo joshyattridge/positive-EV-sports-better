@@ -288,8 +288,8 @@ class HistoricalBacktester:
                     error_summary[error_type] = error_summary.get(error_type, 0) + 1
                 
                 # Cache 404 as empty (data doesn't exist)
-                # Don't cache 422 anymore since we tried individual markets
-                if status_code == 404:
+                # Cache 422 as None to avoid retrying every time
+                if status_code == 404 or status_code == 422:
                     self._save_to_cache(cache_key, None)
                 
                 return False
@@ -541,7 +541,7 @@ class HistoricalBacktester:
             if 'kelly_stake' in opp:
                 opp['kelly_pct'] = opp['kelly_stake']['kelly_percentage'] / 100
                 opp['stake'] = opp['kelly_stake']['recommended_stake']
-            if 'true_probability' in opp and opp['true_probability'] > 1:
+            if 'true_probability' in opp and opp['true_probability'] >= 1:
                 # Scanner returns percentage (0-100), backtest expects decimal (0-1)
                 opp['true_probability'] = opp['true_probability'] / 100
         
