@@ -21,6 +21,8 @@ from src.utils.odds_utils import calculate_implied_probability, calculate_ev
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 load_dotenv()
 
@@ -77,7 +79,14 @@ class HistoricalBacktester:
         return hashlib.md5(key_str.encode()).hexdigest()
     
     def _load_from_cache(self, cache_key: str) -> Optional[Dict]:
-        """Load data from cache if it exists (checks memory first, then disk)."""
+        """Load data from cache if it exists (checks memory first, then disk).
+        
+        Returns:
+            - Dict: Data exists
+            - None: Cache miss (not in cache)
+            
+        Note: Data cached as None (404) is treated as cache miss but won't trigger API retry.
+        """
         # Check in-memory cache first
         if cache_key in self.memory_cache:
             return self.memory_cache[cache_key]
@@ -88,8 +97,9 @@ class HistoricalBacktester:
             try:
                 with open(cache_file, 'r') as f:
                     data = json.load(f)
-                    # Store in memory for future access
-                    self.memory_cache[cache_key] = data
+                    # Only cache in memory if data exists (skip 404s)
+                    if data is not None:
+                        self.memory_cache[cache_key] = data
                     return data
             except Exception as e:
                 print(f"  Warning: Failed to load cache: {e}")
@@ -138,34 +148,196 @@ class HistoricalBacktester:
             print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
             return
         
-        # Generate list of needed cache keys
-        needed_keys = set()
+        # Generate list of needed cache keys with their metadata
+        needed_data = []
+        to_fetch = []  # Items that need API calls
+        
+        print(f"\n🔄 Pre-loading {len(sports) * len(timestamps)} cache files for date range...\n")
+        start_time = time.time()
+        
+        loaded_from_cache = 0
+        failed = 0
+        
+        # First pass: load from cache synchronously (fast)
+        print("Phase 1: Loading from disk cache...")
         for sport in sports:
             for timestamp in timestamps:
                 cache_key = self._get_cache_key(sport, timestamp, 'h2h')
-                needed_keys.add(cache_key)
+                cache_file = self.cache_dir / f"{cache_key}.json"
+                
+                if cache_file.exists():
+                    try:
+                        with open(cache_file, 'r') as f:
+                            data = json.load(f)
+                            # Skip None entries (404s - data doesn't exist)
+                            if data is not None:
+                                self.memory_cache[cache_key] = data
+                                loaded_from_cache += 1
+                            # else: skip 404s, don't add to to_fetch
+                    except Exception as e:
+                        failed += 1
+                else:
+                    # Mark for API fetching
+                    to_fetch.append((cache_key, sport, timestamp))
         
-        print(f"\n🔄 Pre-loading {len(needed_keys)} cache files for date range...")
-        start_time = time.time()
+        print(f"   Loaded {loaded_from_cache} files from cache")
         
-        loaded = 0
-        skipped = 0
-        for cache_key in needed_keys:
-            cache_file = self.cache_dir / f"{cache_key}.json"
-            if cache_file.exists():
-                try:
-                    with open(cache_file, 'r') as f:
-                        self.memory_cache[cache_key] = json.load(f)
-                    loaded += 1
-                except Exception as e:
-                    print(f"  Warning: Failed to load {cache_file.name}: {e}")
-            else:
-                skipped += 1
+        if not to_fetch:
+            elapsed = time.time() - start_time
+            print(f"\n✅ Pre-loaded {loaded_from_cache} files in {elapsed:.2f}s (all from cache)")
+            print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
+            return
+        
+        # Second pass: fetch missing data from API in parallel
+        print(f"\nPhase 2: Fetching {len(to_fetch)} missing files from API...")
+        fetched_from_api = 0
+        
+        # Rate limiter: track API call timing and errors
+        rate_limiter = {'last_call': time.time(), 'lock': threading.Lock()}
+        min_interval = 0.1  # 10 requests per second max
+        error_summary = {}  # Track error types
+        error_lock = threading.Lock()
+        
+        def fetch_one(cache_key, sport, timestamp):
+            """Fetch a single historical odds snapshot with rate limiting."""
+            nonlocal fetched_from_api, failed
+            
+            # Rate limit: ensure minimum time between API calls
+            with rate_limiter['lock']:
+                elapsed = time.time() - rate_limiter['last_call']
+                if elapsed < min_interval:
+                    time.sleep(min_interval - elapsed)
+                rate_limiter['last_call'] = time.time()
+            
+            try:
+                url = f"{self.base_url}/historical/sports/{sport}/odds"
+                params = {
+                    'apiKey': self.api_key,
+                    'bookmakers': ','.join(self.scanner.optimized_bookmakers),
+                    'markets': self.scanner.markets,
+                    'oddsFormat': self.scanner.odds_format,
+                    'date': timestamp
+                }
+                
+                response = requests.get(url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                
+                # Save to cache and memory (thread-safe)
+                self._save_to_cache(cache_key, data)
+                return True
+                
+            except requests.exceptions.HTTPError as e:
+                # Track error types
+                status_code = e.response.status_code if e.response is not None else 'unknown'
+                error_type = f"HTTPError_{status_code}"
+                
+                # Handle 422 by trying individual markets (like live scanner)
+                if status_code == 422:
+                    market_list = [m.strip() for m in self.scanner.markets.split(',')]
+                    if len(market_list) > 1:
+                        # Try each market individually
+                        combined_data = {'data': []}
+                        game_dict = {}  # Track games by ID to merge data
+                        success_count = 0
+                        
+                        for market in market_list:
+                            try:
+                                params['markets'] = market
+                                market_response = requests.get(url, params=params, timeout=10)
+                                market_response.raise_for_status()
+                                market_data = market_response.json()
+                                
+                                if market_data and 'data' in market_data:
+                                    # Merge game data
+                                    for game in market_data['data']:
+                                        game_id = game.get('id')
+                                        if game_id in game_dict:
+                                            # Merge bookmakers for existing game
+                                            existing_game = game_dict[game_id]
+                                            for bookmaker in game.get('bookmakers', []):
+                                                existing_bookmaker = next(
+                                                    (b for b in existing_game.get('bookmakers', []) 
+                                                     if b['key'] == bookmaker['key']),
+                                                    None
+                                                )
+                                                if existing_bookmaker:
+                                                    # Merge markets
+                                                    existing_bookmaker['markets'].extend(bookmaker.get('markets', []))
+                                                else:
+                                                    # Add new bookmaker
+                                                    existing_game.setdefault('bookmakers', []).append(bookmaker)
+                                        else:
+                                            # Add new game
+                                            game_dict[game_id] = game
+                                            combined_data['data'].append(game)
+                                    
+                                    success_count += 1
+                                    
+                            except requests.exceptions.HTTPError as market_error:
+                                # Individual market failed, continue to next
+                                continue
+                        
+                        # If we got any successful markets, save combined data
+                        if success_count > 0:
+                            self._save_to_cache(cache_key, combined_data)
+                            return True
+                
+                # Track all HTTP errors
+                with error_lock:
+                    error_summary[error_type] = error_summary.get(error_type, 0) + 1
+                
+                # Cache 404 as empty (data doesn't exist)
+                # Don't cache 422 anymore since we tried individual markets
+                if status_code == 404:
+                    self._save_to_cache(cache_key, None)
+                
+                return False
+                
+            except Exception as e:
+                # Track other error types (network, timeout, etc.)
+                error_type = type(e).__name__
+                
+                with error_lock:
+                    error_summary[error_type] = error_summary.get(error_type, 0) + 1
+                
+                # Don't cache - allow retry on next run
+                return False
+        
+        # Use ThreadPoolExecutor for parallel fetching (max 5 concurrent)
+        max_workers = 10
+        pbar = tqdm(total=len(to_fetch), desc="Fetching from API", unit="file", ncols=120,
+                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all fetch tasks
+            future_to_data = {executor.submit(fetch_one, *item): item for item in to_fetch}
+            
+            # Process as they complete
+            for future in as_completed(future_to_data):
+                success = future.result()
+                if success:
+                    fetched_from_api += 1
+                else:
+                    failed += 1
+                
+                pbar.update(1)
+                pbar.set_postfix({'fetched': fetched_from_api, 'failed': failed})
+        
+        pbar.close()
         
         elapsed = time.time() - start_time
-        print(f"✅ Pre-loaded {loaded} cache files in {elapsed:.2f}s")
-        if skipped > 0:
-            print(f"   ⚠️  {skipped} files not found in cache")
+        total_loaded = loaded_from_cache + fetched_from_api
+        print(f"\n✅ Pre-loaded {total_loaded} files in {elapsed:.2f}s")
+        print(f"   From cache: {loaded_from_cache}, From API: {fetched_from_api}")
+        if failed > 0:
+            print(f"   ⚠️  Failed/unavailable: {failed}")
+            if error_summary:
+                print(f"   📊 Error breakdown:")
+                for error_type, count in sorted(error_summary.items(), key=lambda x: x[1], reverse=True):
+                    print(f"      • {error_type}: {count}")
+        if fetched_from_api > 0:
+            print(f"   💰 API credits used: ~{fetched_from_api * 10}")
         print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
     
     def bulk_get_historical_odds(self, sports: List[str], timestamps: List[str], markets: str = 'h2h') -> Dict:
@@ -233,9 +405,9 @@ class HistoricalBacktester:
         url = f"{self.base_url}/historical/sports/{sport}/odds"
         params = {
             'apiKey': self.api_key,
-            'regions': 'uk,eu',
+            'bookmakers': ','.join(self.scanner.optimized_bookmakers),
             'markets': markets,
-            'oddsFormat': 'decimal',
+            'oddsFormat': self.scanner.odds_format,
             'date': date
         }
         

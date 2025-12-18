@@ -71,9 +71,6 @@ class PositiveEVScanner:
         # Maximum days ahead filter - read from env or use default (0 = no filter)
         self.max_days_ahead = float(os.getenv('MAX_DAYS_AHEAD', '0'))
         
-        # API regions - read from env or use default
-        self.api_regions = os.getenv('API_REGIONS', 'us,uk,eu,au')
-        
         # Markets - read from env or use default
         self.markets = os.getenv('MARKETS', 'h2h,spreads,totals')
         
