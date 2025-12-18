@@ -107,27 +107,65 @@ class HistoricalBacktester:
         except Exception as e:
             print(f"  Warning: Failed to save cache: {e}")
     
-    def preload_cache(self):
-        """Pre-load all cache files into memory for fast access."""
-        cache_files = list(self.cache_dir.glob('*.json'))
-        if not cache_files:
+    def preload_cache(self, sports: Optional[List[str]] = None, timestamps: Optional[List[str]] = None):
+        """Pre-load cache files into memory for fast access.
+        
+        Args:
+            sports: List of sport keys to preload (if None, loads all)
+            timestamps: List of timestamps to preload (if None, loads all)
+        """
+        # If no filters provided, load everything
+        if sports is None or timestamps is None:
+            cache_files = list(self.cache_dir.glob('*.json'))
+            if not cache_files:
+                return
+            
+            print(f"\n🔄 Pre-loading all {len(cache_files)} cache files into memory...")
+            start_time = time.time()
+            
+            loaded = 0
+            for cache_file in cache_files:
+                try:
+                    cache_key = cache_file.stem
+                    with open(cache_file, 'r') as f:
+                        self.memory_cache[cache_key] = json.load(f)
+                    loaded += 1
+                except Exception as e:
+                    print(f"  Warning: Failed to load {cache_file.name}: {e}")
+            
+            elapsed = time.time() - start_time
+            print(f"✅ Pre-loaded {loaded} cache files in {elapsed:.2f}s")
+            print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
             return
         
-        print(f"\n🔄 Pre-loading {len(cache_files)} cache files into memory...")
+        # Generate list of needed cache keys
+        needed_keys = set()
+        for sport in sports:
+            for timestamp in timestamps:
+                cache_key = self._get_cache_key(sport, timestamp, 'h2h')
+                needed_keys.add(cache_key)
+        
+        print(f"\n🔄 Pre-loading {len(needed_keys)} cache files for date range...")
         start_time = time.time()
         
         loaded = 0
-        for cache_file in cache_files:
-            try:
-                cache_key = cache_file.stem  # filename without extension
-                with open(cache_file, 'r') as f:
-                    self.memory_cache[cache_key] = json.load(f)
-                loaded += 1
-            except Exception as e:
-                print(f"  Warning: Failed to load {cache_file.name}: {e}")
+        skipped = 0
+        for cache_key in needed_keys:
+            cache_file = self.cache_dir / f"{cache_key}.json"
+            if cache_file.exists():
+                try:
+                    with open(cache_file, 'r') as f:
+                        self.memory_cache[cache_key] = json.load(f)
+                    loaded += 1
+                except Exception as e:
+                    print(f"  Warning: Failed to load {cache_file.name}: {e}")
+            else:
+                skipped += 1
         
         elapsed = time.time() - start_time
         print(f"✅ Pre-loaded {loaded} cache files in {elapsed:.2f}s")
+        if skipped > 0:
+            print(f"   ⚠️  {skipped} files not found in cache")
         print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
     
     def bulk_get_historical_odds(self, sports: List[str], timestamps: List[str], markets: str = 'h2h') -> Dict:
@@ -467,9 +505,6 @@ class HistoricalBacktester:
         print(f"One Bet Per Game: {self.scanner.one_bet_per_game}")
         print(f"{'='*80}\n")
         
-        # Pre-load all cache files into memory for faster access
-        self.preload_cache()
-        
         # Parse dates and make them timezone-aware (UTC) for comparison with API data
         from datetime import timezone
         start = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
@@ -494,6 +529,9 @@ class HistoricalBacktester:
         while temp_current <= end:
             all_timestamps.append(temp_current.strftime('%Y-%m-%dT%H:%M:%SZ'))
             temp_current += timedelta(hours=snapshot_interval_hours)
+        
+        # Pre-load only the cache files needed for this date range
+        self.preload_cache(sports=sports, timestamps=all_timestamps)
         
         # Bulk fetch all historical odds data upfront (eliminates 750 function calls)
         odds_data_cache = self.bulk_get_historical_odds(sports, all_timestamps)
