@@ -5,6 +5,7 @@
 bet_history.csv
 paper_trade_history.csv
 bet_analysis_export.csv
+backtest_bet_history.csv
 action_logs.json
 
 # Browser states (contains sensitive auth cookies and session data)

@@ -86,9 +86,6 @@ class BetRepository:
             # Return only those that have failed >= max_failures times
             ignored_bets = {key for key, count in failed_bets.items() if count >= max_failures}
             
-            if ignored_bets:
-                print(f"🚫 Ignoring {len(ignored_bets)} bet opportunities that failed {max_failures}+ times")
-            
             return ignored_bets
             
         except Exception as e:
