@@ -72,6 +72,31 @@ class HistoricalBacktester:
         self.games_bet_on = set()
         # Reset scanner's Kelly bankroll
         self.scanner.kelly.bankroll = self.initial_bankroll
+    
+    def _parse_timestamp(self, ts: str):
+        """Parse timestamp string in various formats, always returning timezone-aware datetime."""
+        from datetime import datetime, timezone
+        
+        # Try ISO format with Z
+        if 'Z' in ts:
+            return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        
+        # Try format with UTC suffix
+        if ' UTC' in ts:
+            dt = datetime.strptime(ts.replace(' UTC', ''), '%Y-%m-%d %H:%M')
+            return dt.replace(tzinfo=timezone.utc)
+        
+        # Try plain ISO format
+        try:
+            dt = datetime.fromisoformat(ts)
+            # Make timezone-aware if naive
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except:
+            # Last resort: try parsing as datetime string
+            dt = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
+            return dt.replace(tzinfo=timezone.utc)
         
     def _get_cache_key(self, sport: str, date: str, markets: str) -> str:
         """Generate a cache key for the API request."""
@@ -605,7 +630,9 @@ class HistoricalBacktester:
     
     def place_bet(self, bet: Dict, result: Optional[str] = None, bet_timestamp: Optional[str] = None):
         """
-        Simulate placing a bet and track profit/loss (bankroll stays at initial value for sizing).
+        Simulate placing a bet with two-stage bankroll updates:
+        1. Deduct stake when bet is placed (at bet_timestamp)
+        2. Add winnings when game commences (at commence_time)
         
         Args:
             bet: Bet details
@@ -613,32 +640,36 @@ class HistoricalBacktester:
             bet_timestamp: When the bet was placed (for charting)
         """
         stake = bet['stake']
+        commence_time = bet.get('commence_time')
         
+        # Stage 1: Deduct stake when bet is placed
+        self.current_bankroll -= stake
+        if bet_timestamp:
+            self.bankroll_timestamps.append(bet_timestamp)
+            self.bankroll_history.append(self.current_bankroll)
+        
+        # Stage 2: Settle bet at game commence time
         if result == 'won':
             profit = stake * (bet['odds'] - 1)
-            self.current_bankroll += profit
+            self.current_bankroll += stake + profit  # Return stake + winnings
             actual_profit = profit
         elif result == 'lost':
-            self.current_bankroll -= stake
+            # Stake already deducted, so loss is -stake
             actual_profit = -stake
         else:
-            # Pending - don't update bankroll yet
+            # Pending - stake already deducted but game hasn't happened
             actual_profit = 0
         
         bet['result'] = result
         bet['actual_profit'] = actual_profit
-        bet['bankroll_after'] = self.current_bankroll  # Cumulative P&L, but bet sizing uses initial bankroll
+        bet['bankroll_after'] = self.current_bankroll
         
         self.bets_placed.append(bet)
         
-        # Only record bankroll changes for settled bets
-        if result is not None:
+        # Record bankroll at game commence time (when bet settles)
+        if result is not None and commence_time:
+            self.bankroll_timestamps.append(commence_time)
             self.bankroll_history.append(self.current_bankroll)
-            
-            # Record timestamp for graphing - use bet placement time, not game time
-            timestamp_to_use = bet_timestamp or bet.get('commence_time')
-            if timestamp_to_use:
-                self.bankroll_timestamps.append(timestamp_to_use)
     
     def backtest(self, sports: List[str], start_date: str, end_date: str, 
                  snapshot_interval_hours: int = 12, simulate_on_missing: bool = True) -> Dict:
@@ -945,25 +976,37 @@ class HistoricalBacktester:
             from collections import OrderedDict
             import numpy as np
             
-            dates = [datetime.fromisoformat(ts.replace('Z', '+00:00')) for ts in self.bankroll_timestamps]
-            print(f"   Converted {len(dates)} timestamps to dates")
+            # Prepend initial timestamp (use first bet time or arbitrary start if no bets)
+            if self.bankroll_timestamps:
+                first_timestamp = self._parse_timestamp(self.bankroll_timestamps[0])
+                # Use a time slightly before the first bet to show initial bankroll
+                initial_timestamp = first_timestamp - timedelta(minutes=1)
+            else:
+                # No bets placed, use current time
+                initial_timestamp = datetime.now()
+            
+            # Create full timestamp list including initial bankroll point
+            all_timestamps = [initial_timestamp] + [self._parse_timestamp(ts) for ts in self.bankroll_timestamps]
+            dates = all_timestamps
+            print(f"   Converted {len(dates)} timestamps to dates (including initial bankroll)")
             
             # Sort by timestamp to fix out-of-order bets
-            sorted_data = sorted(zip(dates, self.bankroll_history[1:]), key=lambda x: x[0])
+            sorted_data = sorted(zip(dates, self.bankroll_history), key=lambda x: x[0])
             dates = [d for d, _ in sorted_data]
             bankroll_values = [b for _, b in sorted_data]
             
             print(f"   Sorted {len(dates)} data points chronologically")
             
-            # Aggregate by date - keep last bankroll value for each day
-            daily_data = OrderedDict()
+            # Aggregate by hour - keep last bankroll value for each hour
+            hourly_data = OrderedDict()
             for date, bankroll in zip(dates, bankroll_values):
-                date_key = date.date()
-                daily_data[date_key] = bankroll
+                # Round down to the hour
+                hour_key = date.replace(minute=0, second=0, microsecond=0)
+                hourly_data[hour_key] = bankroll
             
             # Convert to lists
-            plot_dates = [datetime.combine(d, datetime.min.time()) for d in daily_data.keys()]
-            plot_bankroll = list(daily_data.values())
+            plot_dates = list(hourly_data.keys())
+            plot_bankroll = list(hourly_data.values())
             
             print(f"   Aggregated to {len(plot_dates)} daily data points")
             
@@ -1039,22 +1082,31 @@ class HistoricalBacktester:
         
         # Plot each simulation
         for i, sim in enumerate(self.all_simulations):
-            dates = [datetime.fromisoformat(ts.replace('Z', '+00:00')) for ts in sim['timestamps']]
+            # Prepend initial timestamp for each simulation
+            if sim['timestamps']:
+                first_timestamp = self._parse_timestamp(sim['timestamps'][0])
+                initial_timestamp = first_timestamp - timedelta(minutes=1)
+            else:
+                initial_timestamp = datetime.now()
+            
+            all_timestamps = [initial_timestamp] + [self._parse_timestamp(ts) for ts in sim['timestamps']]
+            dates = all_timestamps
             
             # Sort by timestamp
-            sorted_data = sorted(zip(dates, sim['history'][1:]), key=lambda x: x[0])
+            sorted_data = sorted(zip(dates, sim['history']), key=lambda x: x[0])
             dates = [d for d, _ in sorted_data]
             bankroll_values = [b for _, b in sorted_data]
             
-            # Aggregate by date
+            # Aggregate by hour
             from collections import OrderedDict
-            daily_data = OrderedDict()
+            hourly_data = OrderedDict()
             for date, bankroll in zip(dates, bankroll_values):
-                date_key = date.date()
-                daily_data[date_key] = bankroll
+                # Round down to the hour
+                hour_key = date.replace(minute=0, second=0, microsecond=0)
+                hourly_data[hour_key] = bankroll
             
-            plot_dates = [datetime.combine(d, datetime.min.time()) for d in daily_data.keys()]
-            plot_bankroll = list(daily_data.values())
+            plot_dates = list(hourly_data.keys())
+            plot_bankroll = list(hourly_data.values())
             
             # Apply smoothing
             if len(plot_bankroll) > 3:
