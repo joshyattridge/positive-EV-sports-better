@@ -18,7 +18,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.core.kelly_criterion import KellyCriterion
 from src.utils.bet_logger import BetLogger
 from src.utils.bet_repository import BetRepository
-from src.utils.odds_utils import decimal_to_fractional, calculate_implied_probability, calculate_ev
+from src.utils.odds_utils import (
+    decimal_to_fractional, 
+    calculate_implied_probability, 
+    calculate_ev,
+    calculate_market_vig,
+    remove_vig_proportional,
+    remove_vig_power,
+    remove_vig_shin
+)
 from src.utils.bookmaker_config import BookmakerURLGenerator
 from src.utils.config import BookmakerCredentials
 
@@ -114,6 +122,10 @@ class PositiveEVScanner:
         self.one_bet_per_game = os.getenv('ONE_BET_PER_GAME', 'false').lower() == 'true'
         self.skip_already_bet_games = os.getenv('SKIP_ALREADY_BET_GAMES', 'true').lower() == 'true'
         self.max_bet_failures = int(os.getenv('MAX_BET_FAILURES', '3'))
+        
+        # Vig removal configuration - read from env or use defaults
+        self.use_vig_adjusted_ev = os.getenv('USE_VIG_ADJUSTED_EV', 'false').lower() == 'true'
+        self.vig_removal_method = os.getenv('VIG_REMOVAL_METHOD', 'proportional').lower()
         
     def _load_cache(self) -> Dict:
         """Load cache from disk if it exists and is valid."""
@@ -506,10 +518,47 @@ class PositiveEVScanner:
                     if not sharp_odds:
                         continue
                     
-                    # CRITICAL: Average the probabilities, not the odds!
-                    # Averaging odds is mathematically incorrect and creates false +EV
-                    sharp_probabilities = [calculate_implied_probability(odds) for odds in sharp_odds]
-                    true_probability = sum(sharp_probabilities) / len(sharp_probabilities)
+                    # Calculate true probability - with or without vig adjustment
+                    if self.use_vig_adjusted_ev:
+                        # Vig-adjusted method: Remove vig from sharp books first
+                        # Get all sharp book odds for this market to calculate vig
+                        sharp_market_odds_by_outcome = {}
+                        for odds_data in filtered_odds_list:
+                            if odds_data['bookmaker'] in self.sharp_books:
+                                outcome = odds_data.get('outcome_name', outcome_name)
+                                sharp_market_odds_by_outcome.setdefault(odds_data['bookmaker'], []).append(odds_data['odds'])
+                        
+                        # Average the no-vig probabilities across sharp books
+                        sharp_fair_probs = []
+                        for bookmaker_key, market_odds in sharp_market_odds_by_outcome.items():
+                            # Remove vig from this sharp bookmaker's market
+                            if self.vig_removal_method == 'shin':
+                                fair_odds_list = remove_vig_shin(market_odds)
+                            elif self.vig_removal_method == 'power':
+                                fair_odds_list = remove_vig_power(market_odds)
+                            else:  # proportional (default)
+                                fair_odds_list = remove_vig_proportional(market_odds)
+                            
+                            # Get the fair probability for our outcome (match by position)
+                            for i, orig_odds in enumerate(market_odds):
+                                if orig_odds in sharp_odds:
+                                    if i < len(fair_odds_list):
+                                        fair_prob = 1 / fair_odds_list[i] if fair_odds_list[i] > 0 else 0
+                                        sharp_fair_probs.append(fair_prob)
+                        
+                        # Average the vig-free probabilities
+                        if sharp_fair_probs:
+                            true_probability = sum(sharp_fair_probs) / len(sharp_fair_probs)
+                        else:
+                            # Fallback to standard method if vig removal fails
+                            sharp_probabilities = [calculate_implied_probability(odds) for odds in sharp_odds]
+                            true_probability = sum(sharp_probabilities) / len(sharp_probabilities)
+                    else:
+                        # Standard method: Average the probabilities (with vig) from sharp books
+                        # CRITICAL: Average the probabilities, not the odds!
+                        # Averaging odds is mathematically incorrect and creates false +EV
+                        sharp_probabilities = [calculate_implied_probability(odds) for odds in sharp_odds]
+                        true_probability = sum(sharp_probabilities) / len(sharp_probabilities)
                     
                     # Convert average probability back to odds for display purposes
                     sharp_avg_odds = 1 / true_probability if true_probability > 0 else 0
@@ -851,6 +900,13 @@ def main():
     if scanner.min_kelly_percentage > 0:
         min_stake = scanner.kelly.bankroll * scanner.min_kelly_percentage
         print(f"📏 Minimum Kelly filter: {scanner.min_kelly_percentage * 100:.1f}% (£{min_stake:.2f} min stake)")
+    
+    # Display vig adjustment settings
+    if scanner.use_vig_adjusted_ev:
+        method_name = scanner.vig_removal_method.capitalize()
+        print(f"🔬 Vig Adjustment: ENABLED (using {method_name} method)")
+    else:
+        print(f"🔬 Vig Adjustment: DISABLED (standard method)")
     
     # Scan popular sports
     opportunities = scanner.scan_all_sports()
