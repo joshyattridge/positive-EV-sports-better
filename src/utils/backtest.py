@@ -219,7 +219,7 @@ class HistoricalBacktester:
         
         # Rate limiter: track API call timing and errors
         rate_limiter = {'last_call': time.time(), 'lock': threading.Lock()}
-        min_interval = 0.1  # 10 requests per second max
+        min_interval = 0.02  # 50 requests per second max
         error_summary = {}  # Track error types
         error_lock = threading.Lock()
         
@@ -256,6 +256,10 @@ class HistoricalBacktester:
                 # Track error types
                 status_code = e.response.status_code if e.response is not None else 'unknown'
                 error_type = f"HTTPError_{status_code}"
+
+                # if rate limit exceeded print
+                if status_code == 429:
+                    print("  ⚠️  Rate limit exceeded. Consider slowing down requests.")
                 
                 # Handle 422 by trying individual markets (like live scanner)
                 if status_code == 422:
@@ -330,7 +334,7 @@ class HistoricalBacktester:
                 return False
         
         # Use ThreadPoolExecutor for parallel fetching (max 5 concurrent)
-        max_workers = 10
+        max_workers = 15
         pbar = tqdm(total=len(to_fetch), desc="Fetching from API", unit="file", ncols=120,
                    bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
         
