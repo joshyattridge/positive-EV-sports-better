@@ -426,10 +426,10 @@ class PositiveEVScanner:
             if commence_time <= check_time:
                 continue
             
-            # Skip games too far in the future if max_days_ahead is set (only for live scanning)
-            if self.max_days_ahead > 0 and reference_time is None:
-                now = datetime.now(commence_time.tzinfo)
-                time_until_game = (commence_time - now).total_seconds() / 86400  # Convert to days
+            # Skip games too far in the future if max_days_ahead is set
+            if self.max_days_ahead > 0:
+                current_time = reference_time if reference_time else datetime.now(commence_time.tzinfo)
+                time_until_game = (commence_time - current_time).total_seconds() / 86400  # Convert to days
                 if time_until_game > self.max_days_ahead:
                     continue
             
