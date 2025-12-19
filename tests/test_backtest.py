@@ -153,7 +153,7 @@ class TestPlaceBet:
         assert backtester.current_bankroll == initial_bankroll - 100
     
     def test_place_bet_pending(self, backtester):
-        """Test placing a pending bet (no bankroll change)"""
+        """Test placing a pending bet (stake deducted immediately in two-stage process)"""
         bet = {
             'stake': 100,
             'odds': 2.0,
@@ -164,7 +164,10 @@ class TestPlaceBet:
         initial_bankroll = backtester.current_bankroll
         backtester.place_bet(bet, result=None, bet_timestamp='2024-01-01T12:00:00Z')
         
-        assert backtester.current_bankroll == initial_bankroll
+        # In two-stage betting, stake is deducted when bet is placed
+        assert backtester.current_bankroll == initial_bankroll - 100
+        assert len(backtester.bets_placed) == 1
+        assert backtester.bets_placed[0]['result'] is None
 
 
 class TestFindPositiveEVBets:
