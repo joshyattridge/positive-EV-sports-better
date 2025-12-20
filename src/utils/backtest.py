@@ -1177,26 +1177,44 @@ class HistoricalBacktester:
         # Calculate percentiles at each time point
         percentile_dates = []
         median_values = []
-        p25_values = []
-        p75_values = []
+        percentile_values = {i: [] for i in range(0, 101, 10)}  # 0-10, 10-20, ..., 90-100
         
         for date in common_dates:
             if len(bankrolls_at_time[date]) >= 3:  # Need at least 3 points for meaningful percentiles
                 percentile_dates.append(date)
                 median_values.append(np.median(bankrolls_at_time[date]))
-                p25_values.append(np.percentile(bankrolls_at_time[date], 25))
-                p75_values.append(np.percentile(bankrolls_at_time[date], 75))
+                # Calculate all percentiles in 10% increments
+                for p in range(0, 101, 10):
+                    percentile_values[p].append(np.percentile(bankrolls_at_time[date], p))
         
-        # Plot confidence band (25th-75th percentile)
+        # Plot overlapping percentile bands (from widest to narrowest)
         if percentile_dates:
-            plt.fill_between(percentile_dates, p25_values, p75_values, 
-                           alpha=0.25, color='#FF6B35', 
-                           label='25th-75th Percentile Range', zorder=2)
+            # Define colors from light to darker (outermost to innermost bands)
+            colors = [
+                '#E8F4F8',  # 0-10 / 90-100 (lightest)
+                '#D1E9F1',  # 10-20 / 80-90
+                '#BADEE9',  # 20-30 / 70-80
+                '#A3D3E2',  # 30-40 / 60-70
+                '#8BC8DB',  # 40-50 / 50-60 (middle, darkest)
+            ]
+            
+            # Plot from outermost to innermost
+            for i in range(5):
+                lower_p = i * 10
+                upper_p = 100 - (i * 10)
+                
+                plt.fill_between(percentile_dates, 
+                               percentile_values[lower_p], 
+                               percentile_values[upper_p], 
+                               alpha=0.5, 
+                               color=colors[i], 
+                               label=f'{lower_p}th-{upper_p}th Percentile',
+                               zorder=2+i)
             
             # Plot median line as highlighted overlay
             plt.plot(percentile_dates, median_values, 
                     linewidth=3, color='#FFA500', alpha=0.9,
-                    label='Median Path', zorder=3)
+                    label='Median Path', zorder=10)
         
         # Calculate statistics
         avg_final = np.mean(all_final_bankrolls)
