@@ -1084,6 +1084,9 @@ class HistoricalBacktester:
         
         all_final_bankrolls = []
         
+        # Collect all simulation data for percentile calculation
+        simulation_data = []
+        
         # Plot each simulation
         for i, sim in enumerate(self.all_simulations):
             # Prepend initial timestamp for each simulation
@@ -1122,11 +1125,78 @@ class HistoricalBacktester:
                     plot_dates = smoothed_dates
                     plot_bankroll = smoothed.tolist()
             
-            # Plot with transparency
-            alpha = 0.3 if len(self.all_simulations) > 10 else 0.5
-            plt.plot(plot_dates, plot_bankroll, linewidth=1.5, alpha=alpha, color='#2E86AB')
+            # Store for percentile calculations
+            simulation_data.append({'dates': plot_dates, 'bankroll': plot_bankroll})
+            
+            # Plot with lower transparency
+            alpha = 0.15 if len(self.all_simulations) > 10 else 0.25
+            plt.plot(plot_dates, plot_bankroll, linewidth=1, alpha=alpha, color='#2E86AB', zorder=1)
             
             all_final_bankrolls.append(sim['history'][-1])
+        
+        # Calculate percentile bands over time
+        # Find common time points
+        all_dates = set()
+        for sim_data in simulation_data:
+            all_dates.update(sim_data['dates'])
+        common_dates = sorted(list(all_dates))
+        
+        # Interpolate all simulations to common dates
+        from collections import defaultdict
+        bankrolls_at_time = defaultdict(list)
+        
+        for sim_data in simulation_data:
+            dates = sim_data['dates']
+            bankroll = sim_data['bankroll']
+            
+            for target_date in common_dates:
+                # Find closest value or interpolate
+                if target_date in dates:
+                    idx = dates.index(target_date)
+                    bankrolls_at_time[target_date].append(bankroll[idx])
+                else:
+                    # Find surrounding dates for interpolation
+                    before_dates = [d for d in dates if d <= target_date]
+                    after_dates = [d for d in dates if d > target_date]
+                    
+                    if before_dates and after_dates:
+                        before_date = max(before_dates)
+                        after_date = min(after_dates)
+                        before_idx = dates.index(before_date)
+                        after_idx = dates.index(after_date)
+                        
+                        # Linear interpolation
+                        time_fraction = (target_date - before_date).total_seconds() / (after_date - before_date).total_seconds()
+                        interp_value = bankroll[before_idx] + time_fraction * (bankroll[after_idx] - bankroll[before_idx])
+                        bankrolls_at_time[target_date].append(interp_value)
+                    elif before_dates:
+                        bankrolls_at_time[target_date].append(bankroll[dates.index(max(before_dates))])
+                    elif after_dates:
+                        bankrolls_at_time[target_date].append(bankroll[dates.index(min(after_dates))])
+        
+        # Calculate percentiles at each time point
+        percentile_dates = []
+        median_values = []
+        p25_values = []
+        p75_values = []
+        
+        for date in common_dates:
+            if len(bankrolls_at_time[date]) >= 3:  # Need at least 3 points for meaningful percentiles
+                percentile_dates.append(date)
+                median_values.append(np.median(bankrolls_at_time[date]))
+                p25_values.append(np.percentile(bankrolls_at_time[date], 25))
+                p75_values.append(np.percentile(bankrolls_at_time[date], 75))
+        
+        # Plot confidence band (25th-75th percentile)
+        if percentile_dates:
+            plt.fill_between(percentile_dates, p25_values, p75_values, 
+                           alpha=0.25, color='#FF6B35', 
+                           label='25th-75th Percentile Range', zorder=2)
+            
+            # Plot median line as highlighted overlay
+            plt.plot(percentile_dates, median_values, 
+                    linewidth=3, color='#FFA500', alpha=0.9,
+                    label='Median Path', zorder=3)
         
         # Calculate statistics
         avg_final = np.mean(all_final_bankrolls)
@@ -1138,9 +1208,9 @@ class HistoricalBacktester:
         
         # Add horizontal lines
         plt.axhline(y=self.initial_bankroll, color='gray', linestyle='--', 
-                    linewidth=2, alpha=0.7, label='Initial Bankroll')
+                    linewidth=2, alpha=0.7, label='Initial Bankroll', zorder=2)
         plt.axhline(y=avg_final, color='red', linestyle='-', 
-                    linewidth=2, alpha=0.8, label=f'Average Final: £{avg_final:.2f}')
+                    linewidth=2, alpha=0.8, label=f'Average Final: £{avg_final:.2f}', zorder=2)
         
         # Title with statistics
         plt.title(f'Monte Carlo Backtest Results ({len(self.all_simulations)} Simulations)\n'
@@ -1151,7 +1221,7 @@ class HistoricalBacktester:
         plt.xlabel('Date', fontsize=12, fontweight='bold')
         plt.ylabel('Bankroll (£)', fontsize=12, fontweight='bold')
         plt.grid(True, alpha=0.3, linestyle='--')
-        plt.legend(loc='best', fontsize=10)
+        plt.legend(loc='best', fontsize=10, framealpha=0.9)
         
         # Format x-axis
         plt.gcf().autofmt_xdate()
