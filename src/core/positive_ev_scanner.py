@@ -677,6 +677,16 @@ class PositiveEVScanner:
                                         'link': sharp_link
                                     })
                         
+                        # Generate bookmaker URL - use API link if available, otherwise generate
+                        bookmaker_url = odds_data.get('link')
+                        if not bookmaker_url:
+                            bookmaker_url = self.generate_bookmaker_link(
+                                odds_data['bookmaker'], 
+                                sport, 
+                                home_team, 
+                                away_team
+                            )
+                        
                         opportunities.append({
                             'game_id': game_id,
                             'sport': sport,
@@ -691,7 +701,7 @@ class PositiveEVScanner:
                             'ev_percentage': ev * 100,
                             'true_probability': true_probability * 100,
                             'bookmaker_probability': bookmaker_probability * 100,
-                            'bookmaker_url': odds_data.get('link'),
+                            'bookmaker_url': bookmaker_url,
                             'sharp_links': sharp_links,
                             'kelly_stake': kelly_stake,
                             'expected_profit': expected_profit
