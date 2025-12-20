@@ -138,7 +138,6 @@ class BetLogger:
                 writer = csv.DictWriter(f, fieldnames=self.CSV_HEADERS)
                 writer.writerow(bet_record)
             
-            print(f"✅ Bet logged to {self.log_path}")
             return True
             
         except Exception as e:

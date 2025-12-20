@@ -100,7 +100,6 @@ class BrowserAutomation:
         
         if chromium_path:
             args.extend(["--executable-path", chromium_path])
-            print(f"🌐 Using Chromium at: {chromium_path}")
         
         # Use isolated mode to avoid browser locks between runs
         # Trade-off: Don't persist session between runs, but avoid lock issues
@@ -108,15 +107,12 @@ class BrowserAutomation:
         
         # Disable sandbox when running as root (Docker containers)
         args.append("--no-sandbox")
-        print("🔓 Using isolated browser mode with sandbox disabled (Docker/root environment)")
         
         server_params = StdioServerParameters(
             command="npx",
             args=args,
             env=None
         )
-        
-        print(f"Connecting to Playwright MCP server (headless={self.headless})...")
         
         # Store the context managers to properly manage them
         self._stdio_context = stdio_client(server_params)
@@ -134,7 +130,6 @@ class BrowserAutomation:
             tool for tool in response.tools 
             if tool.name != "browser_take_screenshot"
         ]
-        print(f"Connected! {len(self.available_tools)} tools available (screenshot disabled)")
         
         return self.session
         
@@ -384,7 +379,7 @@ class BrowserAutomation:
         
         # If we have a saved state for this domain, mention it in the task
         if target_domain and self._get_state_file(target_domain).exists():
-            print(f"💡 Saved state available for {target_domain} - will attempt to restore after navigation")
+            pass  # State available for restoration
         
         # Enhance task description with tool calls from previous runs on this website
         enhanced_task = task_description
@@ -398,7 +393,7 @@ class BrowserAutomation:
                 for call in recent_calls:
                     enhanced_task += f"  {json.dumps(call)}\n"
                 enhanced_task += "\n--- End of Reference Tool Calls ---\n"
-                print(f"📚 Added {len(recent_calls)} previous tool calls to task context")
+                pass  # Added previous tool calls to context
         
         system_prompt = (
             "You are a browser automation assistant. Use the available Playwright MCP tools "
@@ -452,8 +447,6 @@ class BrowserAutomation:
                             if len(original_content) > 50:
                                 content_item["content"] = original_content[:50] + "...[old result truncated]"
         
-            print(f"Sending messages to Claude (total messages: {len(messages)})...")
-            
             # Calculate approximate token count (need to convert to JSON-serializable format)
             def make_serializable(obj):
                 """Convert message objects to JSON-serializable format"""
@@ -469,9 +462,8 @@ class BrowserAutomation:
             try:
                 serializable_messages = [make_serializable(m) for m in messages]
                 total_chars = sum(len(json.dumps(m)) for m in serializable_messages)
-                print(f"Approximate character count in all messages: {total_chars}")
             except Exception as e:
-                print(f"Could not calculate message size: {e}")
+                pass  # Could not calculate message size
             
             # Get Claude's response
             response = self.client.messages.create(
@@ -491,19 +483,14 @@ class BrowserAutomation:
             
             # Check if Claude wants to call tools
             tool_calls = [block for block in response.content if block.type == "tool_use"]
+            tool_calls = [block for block in response.content if block.type == "tool_use"]
             
             if tool_calls:
-                print(f"Assistant is calling {len(tool_calls)} tool(s)...")
-                
                 tool_results = []
                 current_batch_tool_calls = []  # Track this batch of tool calls
                 for tool_call in tool_calls:
                     tool_name = tool_call.name
                     tool_args = tool_call.input
-                    
-                    print(f"Calling tool: {tool_name}")
-                    print(f"Arguments: {json.dumps(tool_args, indent=2)}")
-                    
                     # Execute the tool via MCP
                     try:
                         # Track navigation to update current website
@@ -516,7 +503,7 @@ class BrowserAutomation:
                             tool_result = json.dumps([c.model_dump() if hasattr(c, 'model_dump') else str(c) for c in result.content])
                         else:
                             tool_result = str(result)
-                        print(f"Tool result: {tool_result[:200]}...")
+                        pass  # Tool executed
                         
                         # 🆕 RECORD EVERY TOOL CALL AUTOMATICALLY
                         self.action_logger.record_tool_call(tool_name, tool_args)
@@ -567,7 +554,7 @@ class BrowserAutomation:
                 text_content = [block.text for block in response.content if hasattr(block, 'text')]
                 final_response = ' '.join(text_content) if text_content else "Task completed"
                 
-                print(f"\nTask completed: {final_response}")
+                pass  # Task completed
                 
                 # Print summary of recorded tool calls
                 self.action_logger.print_run_summary()
@@ -630,33 +617,24 @@ class BrowserAutomation:
         if not self.session:
             raise RuntimeError("Not connected to Playwright server. Call connect_to_playwright() first.")
         
-        print(f"\n🔍 Starting odds validation for bet: {bet_id}")
-        
         # Step 1: Take snapshot of bookmaker page
-        print("📸 Taking snapshot of bookmaker page...")
         bookmaker_snapshot = await playwright_manual.snapshot(self.session)
         bookmaker_snapshot_text = self._extract_snapshot_text(bookmaker_snapshot)
         
         # Step 2: Navigate to sharp book URL
-        print(f"🌐 Navigating to sharp book: {sharp_url}")
         await playwright_manual.navigate(self.session, sharp_url)
         
         # Wait for page content to load (Pinnacle and other sharp books are JS-heavy)
-        print("⏳ Waiting for page content to load...")
-
         await asyncio.sleep(3)  # Give the page time to render
         
         # Step 3: Take snapshot of sharp book page
-        print("📸 Taking snapshot of sharp book page...")
         sharp_snapshot = await playwright_manual.snapshot(self.session)
         sharp_snapshot_text = self._extract_snapshot_text(sharp_snapshot)
         
         if not sharp_snapshot_text or len(sharp_snapshot_text.strip()) < 50:
-            print(f"⚠️ ERROR: Sharp book page still empty after retries ({len(sharp_snapshot_text)} chars)")
-            print("   The page may require authentication or have loading issues")
+            pass  # Sharp book page may be empty
         
         # Step 4: Use Claude to validate odds
-        print("🤖 Validating odds with Claude...")
         
         # Build bet context string
         bet_context = ""
@@ -706,7 +684,6 @@ Do not include any other text or explanation."""
         
         # Parse Claude's response
         response_text = response.content[0].text.strip()
-        print(f"📋 LLM extracted odds:\n{response_text}")
         
         bookmaker_actual_odds = None
         sharp_actual_odds = None
@@ -739,13 +716,10 @@ Do not include any other text or explanation."""
             sharp_correct = round(sharp_actual_odds, 2) == round(sharp_odds, 2)
         
         # Step 5: Record results to bet_history.csv
-        print("💾 Recording validation results to bet_history.csv...")
         self._update_bet_history(bet_id, bookmaker_correct, sharp_correct, 
                                 bookmaker_actual_odds, sharp_actual_odds, bet_history_path)
         
-        print(f"✅ Validation complete:")
-        print(f"   Bookmaker: {bookmaker_correct} (Expected: {bookmaker_odds}, Actual: {bookmaker_actual_odds or 'not found'})")
-        print(f"   Sharp Book: {sharp_correct} (Expected: {sharp_odds}, Actual: {sharp_actual_odds or 'not found'})")
+        print(f"✅ Odds validated - BM: {'OK' if bookmaker_correct else 'Mismatch'} ({bookmaker_actual_odds or 'N/A'}), Sharp: {'OK' if sharp_correct else 'Mismatch'} ({sharp_actual_odds or 'N/A'})")
         
         return {
             'bookmaker_correct': bookmaker_correct,
@@ -789,12 +763,8 @@ Do not include any other text or explanation."""
         """
         csv_file = Path(csv_path)
         
-        if not csv_file.exists():
-            print(f"⚠️ CSV file not found: {csv_path}")
-            return
-        
-        print(f"📝 Updating bet_history.csv for bet_id: {bet_id}")
-        print(f"   File path: {csv_path}")
+        if not os.path.exists(csv_path):
+            return  # CSV file not found
         
         # Read the CSV
         rows = []
@@ -809,8 +779,6 @@ Do not include any other text or explanation."""
                 if col not in fieldnames:
                     fieldnames.append(col)
             
-            print(f"   Fieldnames: {fieldnames}")
-            
             for row in reader:
                 # Initialize new columns if they don't exist
                 for col in new_columns:
@@ -819,27 +787,19 @@ Do not include any other text or explanation."""
                 
                 # Update matching bet
                 if row.get('game_id') == bet_id:
-                    print(f"   ✓ Found matching bet by game_id: {bet_id}")
                     row['bookmaker_odds_validated'] = str(bookmaker_correct).lower()
                     row['bookmaker_actual_odds'] = str(bookmaker_actual_odds) if bookmaker_actual_odds is not None else ''
                     row['sharp_odds_validated'] = str(sharp_correct).lower()
                     row['sharp_actual_odds'] = str(sharp_actual_odds) if sharp_actual_odds is not None else ''
                     found_match = True
-                    print(f"   Updated values: bm_validated={bookmaker_correct}, bm_actual={bookmaker_actual_odds}, sharp_validated={sharp_correct}, sharp_actual={sharp_actual_odds}")
                 
                 rows.append(row)
-        
-        if not found_match:
-            print(f"   ⚠️ No matching bet found for bet_id: {bet_id}")
-            print(f"   Available game_ids in file: {[r.get('game_id', 'N/A') for r in rows[:5]]}")
         
         # Write back to CSV
         with open(csv_file, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
-        
-        print(f"✅ Updated bet_history.csv for bet: {bet_id}")
 
 
 async def main():

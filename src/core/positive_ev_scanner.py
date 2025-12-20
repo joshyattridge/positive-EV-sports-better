@@ -53,6 +53,28 @@ class PositiveEVScanner:
         if not self.api_key:
             raise ValueError("ODDS_API_KEY must be provided or set in .env file")
         
+        # Track last error for debugging
+        self._last_error = {}
+        
+        # Track if we hit API quota limit
+        self._quota_exceeded = False
+        
+        # Track filtering statistics
+        self._filter_stats = {
+            'total_found': 0,
+            'filtered_already_bet': 0,
+            'filtered_live_games': 0,
+            'filtered_too_far_ahead': 0,
+            'filtered_max_odds': 0,
+            'filtered_min_ev': 0,
+            'filtered_min_probability': 0,
+            'filtered_min_kelly': 0,
+            'filtered_failed_bets': 0,
+            'filtered_one_per_game': 0,
+            'no_sharp_odds': 0,  # Track when sharp book odds aren't available
+            'no_betting_bookmakers': 0  # Track when no betting bookmakers have odds
+        }
+        
         self.base_url = "https://api.the-odds-api.com/v4"
         
         # Sharp bookmakers - read from env or use defaults
@@ -63,6 +85,9 @@ class PositiveEVScanner:
         self.betting_bookmakers = BookmakerCredentials.get_available_bookmakers()
         if not self.betting_bookmakers:
             print("⚠️  Warning: No bookmaker credentials found. Please add credentials to .env file.")
+        
+        print(f"🔍 Sharp books configured: {', '.join(self.sharp_books)}")
+        print(f"💰 Betting bookmakers detected: {', '.join(self.betting_bookmakers) if self.betting_bookmakers else 'NONE'}")
         
         # Minimum EV threshold - read from env or use default
         self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.02'))
@@ -138,7 +163,7 @@ class PositiveEVScanner:
                 cache = {k: v for k, v in cache.items() 
                         if current_time - v[1] < self._cache_duration}
                 if cache:
-                    print(f"📦 Loaded {len(cache)} cached sport(s) from disk")
+                    pass  # Loaded cache from disk
                 return cache
         except Exception as e:
             print(f"⚠️  Could not load cache: {e}")
@@ -217,7 +242,7 @@ class PositiveEVScanner:
             cached_data, cache_time = self._odds_cache[cache_key]
             if current_time - cache_time < self._cache_duration:
                 cache_age_minutes = int((current_time - cache_time) / 60)
-                print(f"💾 Using cached odds for {sport} (cached {cache_age_minutes}m ago)")
+                pass  # Using cached odds
                 return cached_data
         
         url = f"{self.base_url}/sports/{sport}/odds"
@@ -242,7 +267,7 @@ class PositiveEVScanner:
             last_cost = response.headers.get('x-requests-last')
             
             if remaining:
-                print(f"📊 API Usage - Remaining: {remaining}, Used: {used}, Last Cost: {last_cost}")
+                pass  # API call made
             
             data = response.json()
             
@@ -251,12 +276,24 @@ class PositiveEVScanner:
             self._save_cache()
             
             return data
+            
         except requests.exceptions.HTTPError as e:
+            # Check if it's an API quota error
+            try:
+                error_data = e.response.json()
+                if error_data.get('error_code') == 'OUT_OF_USAGE_CREDITS':
+                    self._quota_exceeded = True
+                    print(f"\n❌ API QUOTA EXCEEDED: {error_data.get('message', 'Usage quota reached')}")
+                    print(f"   See: {error_data.get('details_url', 'https://the-odds-api.com')}")
+                    self._last_error[sport] = {'code': 'QUOTA_EXCEEDED', 'message': error_data.get('message', '')}
+                    return []
+            except:
+                pass
+            
             # Handle 422 error (invalid market for sport) by retrying with valid markets
             if e.response.status_code == 422:
                 market_list = [m.strip() for m in markets.split(',')]
                 if len(market_list) > 1:
-                    print(f"⚠️  Some markets not available for {sport}, trying individual markets...")
                     
                     # Try each market individually
                     all_games = []
@@ -315,17 +352,11 @@ class PositiveEVScanner:
                                             game_dict[game['id']] = game
                                     successful_markets.append(market)
                         except requests.exceptions.HTTPError as market_error:
-                            if market_error.response.status_code == 422:
-                                print(f"   ⊗ Market '{market}' not available for {sport}")
-                            else:
-                                print(f"   ⚠️  Error fetching market '{market}': {market_error}")
+                            pass  # Market not available
                         except Exception as market_error:
-                            print(f"   ⚠️  Error fetching market '{market}': {market_error}")
+                            pass  # Error fetching market
                     
                     if all_games:
-                        if successful_markets:
-                            print(f"   ✓ Successfully fetched markets: {', '.join(successful_markets)}")
-                        
                         # Cache with successful markets only
                         success_cache_key = f"{sport}_{'_'.join(successful_markets)}"
                         self._odds_cache[success_cache_key] = (all_games, current_time)
@@ -333,16 +364,15 @@ class PositiveEVScanner:
                         
                         return all_games
                     else:
-                        print(f"⚠️  No valid markets available for {sport}")
                         return []
                 else:
-                    print(f"⚠️  Market '{markets}' not available for {sport}")
                     return []
             else:
-                print(f"Error fetching odds for {sport}: {e}")
+                status_code = getattr(e.response, 'status_code', 'unknown')
+                self._last_error[sport] = {'code': status_code, 'message': str(e)}
                 return []
         except Exception as e:
-            print(f"Error fetching odds for {sport}: {e}")
+            self._last_error[sport] = {'code': 'exception', 'message': str(e)}
             return []
     
     # Backward compatibility: delegate to utility functions
@@ -430,12 +460,14 @@ class PositiveEVScanner:
             
             # Skip games that already have bets
             if game_id and game_id in already_bet_game_ids:
+                self._filter_stats['filtered_already_bet'] += 1
                 continue
             
             # Skip live games (use reference_time for backtesting, current time for live)
             commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
             check_time = reference_time if reference_time else datetime.now(commence_time.tzinfo)
             if commence_time <= check_time:
+                self._filter_stats['filtered_live_games'] += 1
                 continue
             
             # Skip games too far in the future if max_days_ahead is set
@@ -443,6 +475,7 @@ class PositiveEVScanner:
                 current_time = reference_time if reference_time else datetime.now(commence_time.tzinfo)
                 time_until_game = (commence_time - current_time).total_seconds() / 86400  # Convert to days
                 if time_until_game > self.max_days_ahead:
+                    self._filter_stats['filtered_too_far_ahead'] += 1
                     continue
             
             home_team = game['home_team']
@@ -516,6 +549,9 @@ class PositiveEVScanner:
                     sharp_odds = [o['odds'] for o in filtered_odds_list if o['bookmaker'] in self.sharp_books]
                     
                     if not sharp_odds:
+                        self._filter_stats['no_sharp_odds'] += 1
+                        continue
+                    if not sharp_odds:
                         continue
                     
                     # Calculate true probability - with or without vig adjustment
@@ -570,6 +606,7 @@ class PositiveEVScanner:
                         
                         # Only show opportunities for betting bookmakers
                         if odds_data['bookmaker'] not in self.betting_bookmakers:
+                            self._filter_stats['no_betting_bookmakers'] += 1
                             continue
                         
                         bet_odds = odds_data['odds']
@@ -577,83 +614,88 @@ class PositiveEVScanner:
                         
                         # Apply max odds filter
                         if self.max_odds > 0 and bet_odds > self.max_odds:
+                            self._filter_stats['filtered_max_odds'] += 1
                             continue
                         
                         # Apply both EV and probability filters
-                        if ev >= self.min_ev_threshold and true_probability >= self.min_true_probability:
-                            # Skip opportunities that have failed multiple times
-                            opportunity_key = (game_id, market_type, outcome_name)
-                            if opportunity_key in failed_opportunities:
-                                continue
+                        if ev < self.min_ev_threshold:
+                            self._filter_stats['filtered_min_ev'] += 1
+                            continue
+                        
+                        if true_probability < self.min_true_probability:
+                            self._filter_stats['filtered_min_probability'] += 1
+                            continue
+                        
+                        # Skip opportunities that have failed multiple times
+                        opportunity_key = (game_id, market_type, outcome_name)
+                        if opportunity_key in failed_opportunities:
+                            self._filter_stats['filtered_failed_bets'] += 1
+                            continue
                             
-                            # Get bookmaker link from API if available, otherwise generate one
-                            bookmaker_url = odds_data.get('link') or BookmakerURLGenerator.generate_bookmaker_link(
-                                odds_data['bookmaker'],
-                                sport,
-                                home_team,
-                                away_team
-                            )
-                            
-                            # Calculate bookmaker's implied probability
-                            bookmaker_probability = calculate_implied_probability(bet_odds)
-                            
-                            # Calculate full Kelly first (without fraction) to filter bet quality
-                            kelly_stake_full = self.kelly.calculate_kelly_stake(
-                                decimal_odds=bet_odds,
-                                true_probability=true_probability,
-                                kelly_fraction=1.0  # Full Kelly for filtering
-                            )
-                            
-                            # Apply minimum Kelly percentage filter on FULL Kelly (before risk management)
-                            # kelly_percentage is 0-100, min_kelly_percentage is 0-1
-                            if kelly_stake_full['kelly_percentage'] < (self.min_kelly_percentage * 100):
-                                continue
-                            
-                            # Now calculate actual stake with Kelly fraction for risk management
-                            kelly_stake = self.kelly.calculate_kelly_stake(
-                                decimal_odds=bet_odds,
-                                true_probability=true_probability,
-                                kelly_fraction=self.kelly_fraction
-                            )
-                            
-                            # Calculate expected profit
-                            expected_profit = self.kelly.calculate_expected_profit(
-                                stake=kelly_stake['recommended_stake'],
-                                decimal_odds=bet_odds,
-                                true_probability=true_probability
-                            )
-                            
-                            # Collect sharp book links for verification
-                            sharp_links = []
-                            for sharp_data in odds_list:
-                                if sharp_data['bookmaker'] in self.sharp_books:
-                                    sharp_link = sharp_data.get('link')
-                                    if sharp_link:
-                                        sharp_links.append({
-                                            'name': sharp_data['title'],
-                                            'odds': sharp_data['odds'],
-                                            'link': sharp_link
-                                        })
-                            
-                            opportunities.append({
-                                'game_id': game_id,
-                                'sport': sport,
-                                'game': f"{away_team} @ {home_team}",
-                                'commence_time': commence_time_str,
-                                'market': market_type,
-                                'outcome': outcome_name,
-                                'bookmaker': odds_data['title'],
-                                'bookmaker_key': odds_data['bookmaker'],
-                                'odds': bet_odds,
-                                'sharp_avg_odds': sharp_avg_odds,
-                                'ev_percentage': ev * 100,
-                                'true_probability': true_probability * 100,
-                                'bookmaker_probability': bookmaker_probability * 100,
-                                'bookmaker_url': bookmaker_url,
-                                'sharp_links': sharp_links,
-                                'kelly_stake': kelly_stake,
-                                'expected_profit': expected_profit
-                            })
+                        # Calculate bookmaker's implied probability
+                        bookmaker_probability = calculate_implied_probability(bet_odds)
+                        
+                        # Calculate full Kelly first (without fraction) to filter bet quality
+                        kelly_stake_full = self.kelly.calculate_kelly_stake(
+                            decimal_odds=bet_odds,
+                            true_probability=true_probability,
+                            kelly_fraction=1.0  # Full Kelly for filtering
+                        )
+                        
+                        # Apply minimum Kelly percentage filter on FULL Kelly (before risk management)
+                        # kelly_percentage is 0-100, min_kelly_percentage is 0-1
+                        if kelly_stake_full['kelly_percentage'] < (self.min_kelly_percentage * 100):
+                            self._filter_stats['filtered_min_kelly'] += 1
+                            continue
+                        
+                        # Track that we found a valid opportunity before filters
+                        self._filter_stats['total_found'] += 1
+                        
+                        # Now calculate actual stake with Kelly fraction for risk management
+                        kelly_stake = self.kelly.calculate_kelly_stake(
+                            decimal_odds=bet_odds,
+                            true_probability=true_probability,
+                            kelly_fraction=self.kelly_fraction
+                        )
+                        
+                        # Calculate expected profit
+                        expected_profit = self.kelly.calculate_expected_profit(
+                            stake=kelly_stake['recommended_stake'],
+                            decimal_odds=bet_odds,
+                            true_probability=true_probability
+                        )
+                        
+                        # Collect sharp book links for verification
+                        sharp_links = []
+                        for sharp_data in odds_list:
+                            if sharp_data['bookmaker'] in self.sharp_books:
+                                sharp_link = sharp_data.get('link')
+                                if sharp_link:
+                                    sharp_links.append({
+                                        'name': sharp_data['title'],
+                                        'odds': sharp_data['odds'],
+                                        'link': sharp_link
+                                    })
+                        
+                        opportunities.append({
+                            'game_id': game_id,
+                            'sport': sport,
+                            'game': f"{away_team} @ {home_team}",
+                            'commence_time': commence_time_str,
+                            'market': market_type,
+                            'outcome': outcome_name,
+                            'bookmaker': odds_data['title'],
+                            'bookmaker_key': odds_data['bookmaker'],
+                            'odds': bet_odds,
+                            'sharp_avg_odds': sharp_avg_odds,
+                            'ev_percentage': ev * 100,
+                            'true_probability': true_probability * 100,
+                            'bookmaker_probability': bookmaker_probability * 100,
+                            'bookmaker_url': odds_data.get('link'),
+                            'sharp_links': sharp_links,
+                            'kelly_stake': kelly_stake,
+                            'expected_profit': expected_profit
+                        })
         
         return opportunities
     
@@ -668,32 +710,37 @@ class PositiveEVScanner:
         Returns:
             List of positive EV opportunities
         """
-        print(f"\n{'='*80}")
-        print(f"Scanning {sport.upper()} for +EV opportunities...")
-        print(f"{'='*80}\n")
-        
         # First check if there are any events (FREE endpoint)
         events = self.get_events(sport)
         if not events:
-            print(f"ℹ️  No upcoming events for {sport}, skipping odds fetch")
             return []
         
-        print(f"✓ Found {len(events)} events for {sport}, fetching odds...")
         games = self.get_odds(sport, markets)
         
         if not games:
-            print("No games found or API error.")
+            error_info = self._last_error.get(sport, {})
+            if error_info:
+                code = error_info.get('code', 'unknown')
+                msg = error_info.get('message', 'Unknown error')
+                print(f"⚠️  {sport}: No odds (Error {code}: {msg[:50]})")
             return []
+        
+        print(f"✓ {sport}: Analyzing {len(games)} games")
         
         # Get already-bet game IDs if filtering is enabled
         already_bet_game_ids: Set[str] = set()
         if self.skip_already_bet_games:
             already_bet_game_ids = self.bet_repository.get_already_bet_game_ids()
-            if already_bet_game_ids:
-                print(f"🚫 Filtering out {len(already_bet_game_ids)} games with existing bets")
         
         # Use core analysis method
-        return self.analyze_games_for_ev(games, sport, already_bet_game_ids)
+        opportunities = self.analyze_games_for_ev(games, sport, already_bet_game_ids)
+        
+        # Show filter stats for this sport
+        stats = self.get_filter_stats()
+        if stats['no_sharp_odds'] > 0 or stats['no_betting_bookmakers'] > 0:
+            print(f"   ⚠️  {sport}: {stats['no_sharp_odds']} missing sharp odds, {stats['no_betting_bookmakers']} not from betting bookmakers")
+        
+        return opportunities
     
     def scan_all_sports(self, sport_keys: Optional[List[str]] = None) -> Dict[str, List[Dict]]:
         """
@@ -715,6 +762,9 @@ class PositiveEVScanner:
         # Use ThreadPoolExecutor for concurrent scanning
         print(f"🚀 Scanning {len(sport_keys)} sports with up to {self.max_concurrent_requests} concurrent requests...")
         
+        scanned_count = 0
+        error_count = 0
+        
         with ThreadPoolExecutor(max_workers=self.max_concurrent_requests) as executor:
             # Submit all sports for concurrent processing
             future_to_sport = {
@@ -725,14 +775,23 @@ class PositiveEVScanner:
             # Collect results as they complete
             for future in as_completed(future_to_sport):
                 sport = future_to_sport[future]
+                scanned_count += 1
                 try:
                     opportunities = future.result()
                     if opportunities:
                         all_opportunities[sport] = opportunities
-                        print(f"✓ {sport}: Found {len(opportunities)} opportunities")
                 except Exception as e:
-                    print(f"⚠️  Error scanning {sport}: {e}")
+                    error_count += 1
+        # Print summary instead of individual messages
+        success_count = len(all_opportunities)
+        print(f"✓ Scanned {scanned_count} sports: {success_count} with opportunities, {error_count} errors")
         
+        # Check if quota was exceeded
+        if self._quota_exceeded:
+            print(f"\n⚠️  WARNING: API quota exceeded. No odds data available.")
+            print(f"   Check your usage at: https://the-odds-api.com/account")
+        
+        return all_opportunities
         return all_opportunities
     
     def sort_opportunities(self, opportunities: List[Dict]) -> List[Dict]:
@@ -776,6 +835,9 @@ class PositiveEVScanner:
         if not self.one_bet_per_game:
             return opportunities
         
+        # Track how many we filter out
+        original_count = len(opportunities)
+        
         seen_games = set()
         filtered = []
         
@@ -785,7 +847,19 @@ class PositiveEVScanner:
                 seen_games.add(game_key)
                 filtered.append(opp)
         
+        # Track filtered count
+        self._filter_stats['filtered_one_per_game'] += (original_count - len(filtered))
+        
         return filtered
+    
+    def get_filter_stats(self) -> Dict[str, int]:
+        """Get current filter statistics."""
+        return self._filter_stats.copy()
+    
+    def reset_filter_stats(self):
+        """Reset filter statistics to zero."""
+        for key in self._filter_stats:
+            self._filter_stats[key] = 0
     
     def print_opportunities(self, opportunities: Dict[str, List[Dict]]):
         """

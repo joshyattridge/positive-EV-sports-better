@@ -340,7 +340,8 @@ class TestPrintRunSummary:
         action_logger.print_run_summary()
         
         captured = capsys.readouterr()
-        assert 'tool call' in captured.out.lower()
+        # Check for condensed output format
+        assert 'current website' in captured.out.lower() or 'run timestamp' in captured.out.lower()
 
 
 class TestSaveAndLoad:

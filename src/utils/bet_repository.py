@@ -177,23 +177,12 @@ class BetRepository:
         summary = self.get_bet_summary()
         
         if 'error' in summary:
-            print(f"⚠️  {summary['error']}")
             return
         
-        print("\n" + "="*80)
-        print("📊 BET HISTORY SUMMARY")
-        print("="*80)
-        print(f"Total Bets Logged: {summary['total_bets']}")
-        print(f"Total Stake: £{summary['total_stake']:.2f}")
-        print(f"Total Expected Profit: £{summary['total_expected_profit']:.2f}")
-        print(f"\nBet Status:")
-        print(f"  ✅ Wins: {summary['wins']}")
-        print(f"  ❌ Losses: {summary['losses']}")
-        print(f"  ⏳ Pending: {summary['pending']}")
-        print(f"  🚫 Not Placed: {summary['not_placed']}")
+        print("📊 Bet Summary:")
+        print(f"   {summary['total_bets']} bets | £{summary['total_stake']:.2f} stake | £{summary['total_expected_profit']:.2f} exp. profit")
+        print(f"   Status: ✅ {summary['wins']} wins | ❌ {summary['losses']} losses | ⏳ {summary['pending']} pending | 🚫 {summary['not_placed']} not placed")
         
         if summary['wins'] + summary['losses'] > 0:
-            print(f"\n📈 Win Rate: {summary['win_rate']:.1f}%")
-            print(f"💰 Actual P/L: £{summary['total_actual_profit']:.2f}")
-        
-        print("="*80 + "\n")
+            print(f"   Win rate: {summary['win_rate']:.1f}% | Actual P/L: £{summary['total_actual_profit']:.2f}")
+

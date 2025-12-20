@@ -177,6 +177,7 @@ class TestFindBestOpportunity:
         }
         mock_scanner.sort_opportunities.side_effect = lambda x: x
         mock_scanner.filter_one_bet_per_game.side_effect = lambda x: x
+        mock_scanner.get_filter_stats.return_value = {'filtered_one_per_game': 0}
         
         auto_bet_placer.scanner = mock_scanner
         
@@ -190,6 +191,18 @@ class TestFindBestOpportunity:
         """Test when no opportunities found"""
         mock_scanner = Mock()
         mock_scanner.scan_all_sports.return_value = {}
+        mock_scanner.get_filter_stats.return_value = {
+            'no_sharp_odds': 0,
+            'no_betting_bookmakers': 0,
+            'filtered_already_bet': 0,
+            'filtered_live_games': 0,
+            'filtered_too_far_ahead': 0,
+            'filtered_max_odds': 0,
+            'filtered_min_ev': 0,
+            'filtered_min_probability': 0,
+            'filtered_min_kelly': 0,
+            'filtered_failed_bets': 0,
+        }
         
         auto_bet_placer.scanner = mock_scanner
         
@@ -251,6 +264,7 @@ class TestFindBestOpportunities:
         }
         mock_scanner.sort_opportunities.side_effect = lambda x: x
         mock_scanner.filter_one_bet_per_game.side_effect = lambda x: x
+        mock_scanner.get_filter_stats.return_value = {'filtered_one_per_game': 1}
         
         auto_bet_placer.scanner = mock_scanner
         
@@ -284,6 +298,7 @@ class TestFindBestOpportunities:
         }
         mock_scanner.sort_opportunities.side_effect = lambda x: x
         mock_scanner.filter_one_bet_per_game.side_effect = lambda x: x
+        mock_scanner.get_filter_stats.return_value = {'filtered_one_per_game': 0}
         
         auto_bet_placer.scanner = mock_scanner
         
@@ -298,6 +313,18 @@ class TestFindBestOpportunities:
         """Test returns empty list when no opportunities"""
         mock_scanner = Mock()
         mock_scanner.scan_all_sports.return_value = {}
+        mock_scanner.get_filter_stats.return_value = {
+            'no_sharp_odds': 0,
+            'no_betting_bookmakers': 0,
+            'filtered_already_bet': 0,
+            'filtered_live_games': 0,
+            'filtered_too_far_ahead': 0,
+            'filtered_max_odds': 0,
+            'filtered_min_ev': 0,
+            'filtered_min_probability': 0,
+            'filtered_min_kelly': 0,
+            'filtered_failed_bets': 0,
+        }
         
         auto_bet_placer.scanner = mock_scanner
         
@@ -341,6 +368,7 @@ class TestFindBestOpportunities:
         }
         mock_scanner.sort_opportunities.side_effect = lambda x: x
         mock_scanner.filter_one_bet_per_game.side_effect = lambda x: x
+        mock_scanner.get_filter_stats.return_value = {'filtered_one_per_game': 1}
         
         auto_bet_placer.scanner = mock_scanner
         

@@ -304,14 +304,5 @@ class ActionLogger:
         """
         Print a summary of the current run's recorded tool calls.
         """
-        summary = self.get_run_summary()
-        
-        if "error" in summary:
-            print(f"⚠️  {summary['error']}")
-            return
-        
-        total = summary["total_tool_calls"]
-        if total > 0:
-            print(f"📝 Recorded {total} tool calls to {self.log_path}")
-        else:
-            print(f"📝 No tool calls recorded for this run")
+        # Silently skip - no need to print tool call summary
+        pass
