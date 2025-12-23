@@ -383,14 +383,16 @@ class TestRealWorldEVScenarios:
         'SHARP_BOOKS': 'pinnacle,betfair',
         'MIN_EV_THRESHOLD': '0.02',
         'BANKROLL': '1000',
-        'MARKETS': 'h2h'
+        'MARKETS': 'h2h',
+        'USE_VIG_ADJUSTED_EV': 'false'  # Use standard method for this test
     })
     def test_small_edge_detection(self, mock_bookmakers):
-        """Detect small but profitable 2% edge"""
+        """Detect small but profitable edge (without vig adjustment)"""
         scanner = PositiveEVScanner()
         scanner.markets = 'h2h'
         
-        # Pinnacle: 1.95, Betfair: 2.05 (avg prob = 50%)
+        # Pinnacle Team A: 2.05, Betfair Team A: 2.05
+        # Average implied prob = 1/2.05 = 48.78%
         # Bet365: 2.10 (47.6% implied) = +5% EV
         games = [{
             'id': 'game3',
@@ -440,9 +442,15 @@ class TestRealWorldEVScenarios:
         assert len(opportunities) == 1
         opp = opportunities[0]
         
-        # Verify calculations
-        sharp_prob = (1/1.95 + 1/2.05) / 2  # ~0.50
-        expected_ev = (sharp_prob * (2.10 - 1)) - (1 - sharp_prob)
+        # Verify calculations (without vig adjustment)
+        # Pinnacle Team A: 1.95 → implied prob = 1/1.95 = 0.5128
+        # Betfair Team A: 2.05 → implied prob = 1/2.05 = 0.4878
+        # Average sharp prob = (0.5128 + 0.4878) / 2 = 0.5003
+        # EV at 2.10: (0.5003 × 2.10) - 1 ≈ 5.06%
+        pinnacle_prob = 1 / 1.95
+        betfair_prob = 1 / 2.05
+        sharp_prob_team_a = (pinnacle_prob + betfair_prob) / 2
+        expected_ev = (sharp_prob_team_a * 2.10) - 1
         
         assert opp['odds'] == 2.10
         assert opp['ev_percentage'] == pytest.approx(expected_ev * 100, rel=0.01)

@@ -557,30 +557,40 @@ class PositiveEVScanner:
                     # Calculate true probability - with or without vig adjustment
                     if self.use_vig_adjusted_ev:
                         # Vig-adjusted method: Remove vig from sharp books first
-                        # Get all sharp book odds for this market to calculate vig
-                        sharp_market_odds_by_outcome = {}
-                        for odds_data in filtered_odds_list:
-                            if odds_data['bookmaker'] in self.sharp_books:
-                                outcome = odds_data.get('outcome_name', outcome_name)
-                                sharp_market_odds_by_outcome.setdefault(odds_data['bookmaker'], []).append(odds_data['odds'])
+                        # We need ALL outcomes from the market to properly de-vig, not just the current outcome
+                        # Build complete market odds for each sharp bookmaker
+                        sharp_market_odds_complete = {}  # {bookmaker: {outcome_name: odds}}
+                        
+                        # First pass: collect ALL outcomes for each sharp bookmaker
+                        for other_outcome_name, other_odds_list in market_data.items():
+                            for odds_data in other_odds_list:
+                                if odds_data['bookmaker'] in self.sharp_books and odds_data.get('outcome_count', 0) == most_common_count:
+                                    bookmaker_key = odds_data['bookmaker']
+                                    if bookmaker_key not in sharp_market_odds_complete:
+                                        sharp_market_odds_complete[bookmaker_key] = {}
+                                    sharp_market_odds_complete[bookmaker_key][other_outcome_name] = odds_data['odds']
                         
                         # Average the no-vig probabilities across sharp books
                         sharp_fair_probs = []
-                        for bookmaker_key, market_odds in sharp_market_odds_by_outcome.items():
-                            # Remove vig from this sharp bookmaker's market
-                            if self.vig_removal_method == 'shin':
-                                fair_odds_list = remove_vig_shin(market_odds)
-                            elif self.vig_removal_method == 'power':
-                                fair_odds_list = remove_vig_power(market_odds)
-                            else:  # proportional (default)
-                                fair_odds_list = remove_vig_proportional(market_odds)
+                        for bookmaker_key, outcome_odds_dict in sharp_market_odds_complete.items():
+                            # Get all odds for this market (all outcomes)
+                            market_odds_list = list(outcome_odds_dict.values())
+                            outcome_names_list = list(outcome_odds_dict.keys())
                             
-                            # Get the fair probability for our outcome (match by position)
-                            for i, orig_odds in enumerate(market_odds):
-                                if orig_odds in sharp_odds:
-                                    if i < len(fair_odds_list):
-                                        fair_prob = 1 / fair_odds_list[i] if fair_odds_list[i] > 0 else 0
-                                        sharp_fair_probs.append(fair_prob)
+                            # Remove vig from this sharp bookmaker's complete market
+                            if self.vig_removal_method == 'shin':
+                                fair_odds_list = remove_vig_shin(market_odds_list)
+                            elif self.vig_removal_method == 'power':
+                                fair_odds_list = remove_vig_power(market_odds_list)
+                            else:  # proportional (default)
+                                fair_odds_list = remove_vig_proportional(market_odds_list)
+                            
+                            # Find the fair probability for our current outcome
+                            if outcome_name in outcome_names_list:
+                                outcome_idx = outcome_names_list.index(outcome_name)
+                                if outcome_idx < len(fair_odds_list) and fair_odds_list[outcome_idx] > 0:
+                                    fair_prob = 1 / fair_odds_list[outcome_idx]
+                                    sharp_fair_probs.append(fair_prob)
                         
                         # Average the vig-free probabilities
                         if sharp_fair_probs:
