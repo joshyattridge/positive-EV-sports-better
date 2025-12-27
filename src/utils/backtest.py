@@ -18,6 +18,7 @@ import csv
 from pathlib import Path
 from src.core.positive_ev_scanner import PositiveEVScanner
 from src.utils.odds_utils import calculate_implied_probability, calculate_ev
+from src.utils.google_search_scraper import GoogleSearchScraper
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from tqdm import tqdm
@@ -32,8 +33,12 @@ class HistoricalBacktester:
     Backtest betting strategy using historical odds data.
     """
     
-    def __init__(self):
-        """Initialize backtester with scanner."""
+    def __init__(self, use_google_search: bool = False):
+        """Initialize backtester with scanner.
+        
+        Args:
+            use_google_search: If True, use SerpAPI to fetch real game results from Google Sports
+        """
         self.api_key = os.getenv('ODDS_API_KEY')
         if not self.api_key:
             raise ValueError("ODDS_API_KEY must be set in .env file")
@@ -46,6 +51,18 @@ class HistoricalBacktester:
         
         # Initialize scanner (reads all parameters from .env)
         self.scanner = PositiveEVScanner(api_key=self.api_key)
+        
+        # Initialize SerpAPI scraper if enabled
+        self.use_google_search = use_google_search
+        self.google_scraper = None
+        if use_google_search:
+            try:
+                self.google_scraper = GoogleSearchScraper()
+                print(f"✅ SerpAPI enabled for real game results (Google Sports)")
+            except ValueError as e:
+                print(f"⚠️  SerpAPI not configured: {e}")
+                print(f"   Falling back to simulated results")
+                self.use_google_search = False
         
         # Store initial bankroll for resets
         self.initial_bankroll = self.scanner.kelly.bankroll
@@ -580,14 +597,61 @@ class HistoricalBacktester:
         """
         Determine if a bet won or lost based on actual game results.
         
+        This method first tries to use Google Search API (if enabled) to fetch
+        real game results. If that fails or is disabled, falls back to pre-indexed
+        scores data.
+        
         Args:
-            bet: Bet details
-            scores_data: Pre-indexed scores data by game matchup
+            bet: Bet details (must include 'game', 'sport', 'outcome', 'market', 'commence_time')
+            scores_data: Pre-indexed scores data by game matchup (fallback)
             
         Returns:
             'won', 'lost', or None if result unknown
         """
-        # Look up game in pre-indexed scores data
+        # Try Google Search API first if enabled
+        if self.use_google_search and self.google_scraper:
+            try:
+                # Parse team names from the game string (e.g., "Buffalo Bills @ New England Patriots")
+                game_str = bet.get('game', '')
+                if ' @ ' in game_str:
+                    away_team, home_team = game_str.split(' @ ')
+                    away_team = away_team.strip()
+                    home_team = home_team.strip()
+                    
+                    # Get game date from commence_time
+                    game_date = bet.get('commence_time', '')
+                    sport = bet.get('sport', '')
+                    
+                    # Fetch result from Google
+                    result = self.google_scraper.get_game_result(
+                        sport=sport,
+                        away_team=away_team,
+                        home_team=home_team,
+                        game_date=game_date
+                    )
+                    
+                    if result:
+                        away_score = result['away_score']
+                        home_score = result['home_score']
+                        
+                        # Determine winner based on market type
+                        if bet['market'] == 'h2h':
+                            outcome = bet['outcome']
+                            
+                            if outcome == home_team and home_score > away_score:
+                                return 'won'
+                            elif outcome == away_team and away_score > home_score:
+                                return 'won'
+                            elif 'Draw' in outcome and home_score == away_score:
+                                return 'won'
+                            else:
+                                return 'lost'
+                
+            except Exception as e:
+                # If Google Search fails, fall back to scores_data
+                pass
+        
+        # Fallback: Look up game in pre-indexed scores data
         bet_game = f"{bet.get('game', '')}"
         game = scores_data.get(bet_game)
         
@@ -721,8 +785,11 @@ class HistoricalBacktester:
         snapshot_count = 0
         total_opportunities = 0
         
-        # Skip score fetching - use simulation for all results
-        print("\n📋 Using simulated results based on true win probabilities\n")
+        # Determine result source
+        if self.use_google_search and self.google_scraper:
+            print("\n📋 Using Google Search API for real game results\n")
+        else:
+            print("\n📋 Using simulated results based on true win probabilities\n")
         scores_data = {}
         
         # Calculate total snapshots for progress bar
@@ -824,6 +891,10 @@ class HistoricalBacktester:
         
         # Close progress bar
         pbar.close()
+        
+        # Print Google Search API statistics if used
+        if self.use_google_search and self.google_scraper:
+            self.google_scraper.print_stats()
         
         print(f"\n{'='*80}")
         print(f"BACKTEST COMPLETE")
@@ -1577,6 +1648,12 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
         help='Run Monte Carlo simulation with N iterations (default: 0 = single run)'
     )
     
+    parser.add_argument(
+        '--google-search',
+        action='store_true',
+        help='Use SerpAPI to fetch real game results from Google Sports (requires SERPAPI_KEY in .env, 100 free/month)'
+    )
+    
     args = parser.parse_args()
     
     # Determine sports to backtest
@@ -1621,7 +1698,7 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
         return
     
     # Run backtest with all sports together
-    backtester = HistoricalBacktester()
+    backtester = HistoricalBacktester(use_google_search=args.google_search)
     
     if args.monte_carlo > 0:
         # Run Monte Carlo simulation
