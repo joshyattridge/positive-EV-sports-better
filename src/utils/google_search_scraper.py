@@ -184,6 +184,13 @@ class GoogleSearchScraper:
                 if score:
                     return score
         
+        # Fallback: Try to parse from organic_results (for less popular leagues)
+        organic_results = search_results.get('organic_results', [])
+        if organic_results:
+            score = self._parse_score_from_organic_results(organic_results, away_team, home_team)
+            if score:
+                return score
+        
         return None
     
     def _extract_score_from_teams(self, teams: List[Dict], away_team: str, home_team: str) -> Optional[Tuple[int, int, str]]:
@@ -302,6 +309,73 @@ class GoogleSearchScraper:
             return True
         
         return False
+    
+    def _parse_score_from_organic_results(self, organic_results: List[Dict], away_team: str, home_team: str) -> Optional[Tuple[int, int, str]]:
+        """
+        Parse score from organic search results (fallback for non-structured data).
+        
+        Args:
+            organic_results: List of organic search results
+            away_team: Away team name
+            home_team: Home team name
+            
+        Returns:
+            Tuple of (away_score, home_score, winner) or None if not found
+        """
+        import re
+        
+        # Common score patterns in titles/snippets
+        # Pattern 1: "Team1 8, Team2 1" or "Team1 8 - Team2 1"
+        # Pattern 2: "Team1 defeats Team2 11-5" or "Team1 11, Team2 5"
+        score_patterns = [
+            r'(\d+)\s*[-,]\s*(\d+)',  # "8-1" or "8, 1"
+            r'(\d+)\s+Final\s+(\d+)',  # "8 Final 1"
+            r'defeat(?:ed|s?).*?(\d+)\s*[-,]\s*(\d+)',  # "defeated ... 11-5"
+        ]
+        
+        for result in organic_results[:5]:  # Check first 5 results
+            title = result.get('title', '')
+            snippet = result.get('snippet', '')
+            text = f"{title} {snippet}"
+            
+            # Try to find both team names in the text
+            has_away = any(self._team_matches(word, away_team) for word in text.split())
+            has_home = any(self._team_matches(word, home_team) for word in text.split())
+            
+            if not (has_away or has_home):
+                continue
+            
+            # Try to extract score
+            for pattern in score_patterns:
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                if matches:
+                    try:
+                        # Get first score match
+                        score1, score2 = int(matches[0][0]), int(matches[0][1])
+                        
+                        # Determine which team is which based on text position
+                        # Check if away team appears before home team in text
+                        away_pos = min([text.lower().find(word.lower()) for word in away_team.split() if word.lower() in text.lower()] + [999999])
+                        home_pos = min([text.lower().find(word.lower()) for word in home_team.split() if word.lower() in text.lower()] + [999999])
+                        
+                        if away_pos < home_pos:
+                            away_score, home_score = score1, score2
+                        else:
+                            away_score, home_score = score2, score1
+                        
+                        # Determine winner
+                        if away_score > home_score:
+                            winner = away_team
+                        elif home_score > away_score:
+                            winner = home_team
+                        else:
+                            winner = "Draw"
+                        
+                        return (away_score, home_score, winner)
+                    except (ValueError, IndexError):
+                        continue
+        
+        return None
 
     def get_game_result(self, sport: str, away_team: str, home_team: str, 
                        game_date: str) -> Optional[Dict]:
@@ -318,26 +392,51 @@ class GoogleSearchScraper:
             Dict with keys: away_score, home_score, winner, source, query
             Or None if not found
         """
-        # Format the search query
+        # Format the search query with exact dates
         # Try multiple query formats to maximize chances of finding scores
         try:
             date_obj = datetime.fromisoformat(game_date.replace('Z', '+00:00'))
-            date_str = date_obj.strftime("%d %B %Y")  # "01 January 2025"
-            month_year = date_obj.strftime("%B %Y")  # "January 2025"
+            date_full = date_obj.strftime("%d %B %Y")  # "01 January 2025"
+            date_short = date_obj.strftime("%B %d, %Y")  # "January 01, 2025"
+            date_iso = date_obj.strftime("%Y-%m-%d")  # "2025-01-01"
         except:
-            date_str = game_date[:10]
-            month_year = game_date[:7]
+            date_full = game_date[:10]
+            date_short = game_date[:10]
+            date_iso = game_date[:10]
         
-        # Try multiple query variations
+        # Try multiple query variations - all with exact dates for better precision
         queries = [
-            f"{home_team} {away_team} {date_str} score",
-            f"{away_team} vs {home_team} {month_year} final score",
-            f"{home_team} vs {away_team} {month_year} result",
-            f"{home_team} {away_team} score {date_str}",
+            f"{away_team} vs {home_team} {date_short} score",
+            f"{home_team} vs {away_team} {date_short} final score",
+            f"{home_team} {away_team} {date_full} score",
+            f"{away_team} {home_team} score {date_iso}",
+            f"{sport} {away_team} vs {home_team} {date_short}",
         ]
         
+        # First pass: Check cache only (avoid unnecessary API calls)
         for query in queries:
-            # Perform search with sports-specific parameters
+            cache_key = self._get_cache_key(query + "_serpapi")
+            cached_result = self._load_from_cache(cache_key)
+            
+            if cached_result:
+                self.stats['cache_hits'] += 1
+                parsed_score = self.parse_score_from_results(cached_result, away_team, home_team)
+                
+                if parsed_score:
+                    away_score, home_score, winner = parsed_score
+                    self.stats['successful_parses'] += 1
+                    
+                    return {
+                        'away_score': away_score,
+                        'home_score': home_score,
+                        'winner': winner,
+                        'source': 'serpapi',
+                        'query': query
+                    }
+        
+        # Second pass: Try API calls for uncached queries
+        for query in queries:
+            # This will use cache or make API call
             search_results = self.search_sports_score(query)
             
             if not search_results:
