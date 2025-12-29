@@ -593,7 +593,7 @@ class HistoricalBacktester:
         
         return opportunities
     
-    def determine_bet_result(self, bet: Dict, scores_data: Dict) -> Optional[str]:
+    def determine_bet_result(self, bet: Dict, scores_data: Dict, current_time: Optional[datetime] = None) -> Optional[str]:
         """
         Determine if a bet won or lost based on actual game results.
         
@@ -601,13 +601,40 @@ class HistoricalBacktester:
         real game results. If that fails or is disabled, falls back to pre-indexed
         scores data.
         
+        CRITICAL: Only fetches results for games that have ALREADY completed at current_time
+        to prevent look-ahead bias in backtesting.
+        
         Args:
             bet: Bet details (must include 'game', 'sport', 'outcome', 'market', 'commence_time')
             scores_data: Pre-indexed scores data by game matchup (fallback)
+            current_time: Current time in backtest (None = use actual current time for live trading)
             
         Returns:
             'won', 'lost', or None if result unknown
         """
+        # ANTI-LOOK-AHEAD PROTECTION:
+        # Only check game results if the game has already completed
+        commence_time = bet.get('commence_time', '')
+        if commence_time and current_time:
+            # Parse commence time
+            try:
+                if isinstance(commence_time, str):
+                    game_time = self._parse_timestamp(commence_time)
+                else:
+                    game_time = commence_time
+                
+                # Add buffer for game completion (e.g., 4 hours for most sports)
+                # This ensures the game has actually finished before we look up results
+                from datetime import timedelta
+                game_completion_time = game_time + timedelta(hours=4)
+                
+                # If current backtest time is before game completion, result is not yet known
+                if current_time < game_completion_time:
+                    return None
+            except Exception:
+                # If we can't parse the time, be conservative and return None
+                return None
+        
         # Try Google Search API first if enabled
         if self.use_google_search and self.google_scraper:
             try:
@@ -698,9 +725,7 @@ class HistoricalBacktester:
     
     def place_bet(self, bet: Dict, result: Optional[str] = None, bet_timestamp: Optional[str] = None):
         """
-        Simulate placing a bet with two-stage bankroll updates:
-        1. Deduct stake when bet is placed (at bet_timestamp)
-        2. Add winnings when game commences (at commence_time)
+        Simulate placing a bet and update bankroll only when bet settles.
         
         Args:
             bet: Bet details
@@ -710,37 +735,37 @@ class HistoricalBacktester:
         stake = bet['stake']
         commence_time = bet.get('commence_time')
         
-        # Stage 1: Deduct stake when bet is placed
-        self.current_bankroll -= stake
-        if bet_timestamp:
-            self.bankroll_timestamps.append(bet_timestamp)
-            self.bankroll_history.append(self.current_bankroll)
-        
-        # Stage 2: Settle bet at game commence time
+        # Only update bankroll for settled bets
         if result == 'won':
             profit = stake * (bet['odds'] - 1)
-            self.current_bankroll += stake + profit  # Return stake + winnings
+            self.current_bankroll += profit  # Just add the profit (net gain)
             actual_profit = profit
+            
+            # Record bankroll at settlement time
+            if bet_timestamp:
+                self.bankroll_timestamps.append(bet_timestamp)
+                self.bankroll_history.append(self.current_bankroll)
+                
         elif result == 'lost':
-            # Stake already deducted, so loss is -stake
+            self.current_bankroll -= stake  # Deduct the stake (net loss)
             actual_profit = -stake
+            
+            # Record bankroll at settlement time
+            if bet_timestamp:
+                self.bankroll_timestamps.append(bet_timestamp)
+                self.bankroll_history.append(self.current_bankroll)
         else:
-            # Pending - stake already deducted but game hasn't happened
+            # Pending - don't update bankroll yet
             actual_profit = 0
         
         bet['result'] = result
         bet['actual_profit'] = actual_profit
-        bet['bankroll_after'] = self.current_bankroll
+        bet['bankroll_after'] = self.current_bankroll if result is not None else None
         
         self.bets_placed.append(bet)
-        
-        # Record bankroll at game commence time (when bet settles)
-        if result is not None and commence_time:
-            self.bankroll_timestamps.append(commence_time)
-            self.bankroll_history.append(self.current_bankroll)
     
     def backtest(self, sports: List[str], start_date: str, end_date: str, 
-                 snapshot_interval_hours: int = 12, simulate_on_missing: bool = True) -> Dict:
+                 snapshot_interval_hours: int = 12) -> Dict:
         """
         Run backtest over a date range for one or more sports.
         
@@ -749,7 +774,6 @@ class HistoricalBacktester:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
             snapshot_interval_hours: Hours between snapshots (default 12)
-            simulate_on_missing: If True, simulate results when scores unavailable (default True)
             
         Returns:
             Backtest results
@@ -860,13 +884,10 @@ class HistoricalBacktester:
                     pending_count = 0
                     
                     for opp in new_opportunities:
-                        # Determine result if available
-                        result = self.determine_bet_result(opp, scores_data)
+                        # Determine result if available (pass current backtest time to prevent look-ahead bias)
+                        result = self.determine_bet_result(opp, scores_data, current_time=current)
                         
-                        # If no result and simulation is enabled, simulate based on true probability
-                        if result is None and simulate_on_missing:
-                            result = 'won' if random.random() < opp['true_probability'] else 'lost'
-                        
+                        # No simulation - only use real Google results
                         if result == 'won':
                             won_count += 1
                         elif result == 'lost':
@@ -878,19 +899,60 @@ class HistoricalBacktester:
                         opp['bet_placed_at'] = timestamp
                         self.place_bet(opp, result, bet_timestamp=timestamp)
                     
-                    # Print batch summary
-                    if pending_count > 0:
-                        print(f"    Placed {len(new_opportunities)} bets: {won_count}W-{lost_count}L-{pending_count}P | Bankroll: £{self.current_bankroll:.2f}")
-                    else:
-                        # Update postfix with latest stats
-                        pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities, 
-                                        'bankroll': f'£{self.current_bankroll:.0f}'})
+                    # Update postfix with latest stats
+                    pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities, 
+                                    'bankroll': f'£{self.current_bankroll:.0f}'})
             
             # Move to next snapshot
             current += timedelta(hours=snapshot_interval_hours)
         
         # Close progress bar
         pbar.close()
+        
+        # Settle all pending bets at the end of backtest using Google results
+        pending_bets = [b for b in self.bets_placed if b.get('result') is None]
+        if pending_bets:
+            print(f"\n{'='*80}")
+            print(f"SETTLING PENDING BETS WITH GOOGLE RESULTS")
+            print(f"{'='*80}")
+            print(f"Fetching real results for {len(pending_bets)} pending bets...\n")
+            
+            settled_count = 0
+            failed_count = 0
+            
+            for bet in pending_bets:
+                # Use end time as current_time to check if game has completed
+                result = self.determine_bet_result(bet, scores_data, current_time=end)
+                
+                if result is not None:
+                    # Update bet result and bankroll
+                    bet['result'] = result
+                    
+                    if result == 'won':
+                        profit = bet['stake'] * (bet['odds'] - 1)
+                        self.current_bankroll += profit
+                        bet['actual_profit'] = profit
+                    else:  # lost
+                        self.current_bankroll -= bet['stake']
+                        bet['actual_profit'] = -bet['stake']
+                    
+                    bet['bankroll_after'] = self.current_bankroll
+                    
+                    # Add to bankroll history
+                    bet_time = bet.get('bet_placed_at', bet.get('commence_time'))
+                    if bet_time:
+                        self.bankroll_timestamps.append(bet_time)
+                        self.bankroll_history.append(self.current_bankroll)
+                    
+                    settled_count += 1
+                else:
+                    failed_count += 1
+                    print(f"   ⚠️  Could not get result for: {bet.get('game')} ({bet.get('sport')})")
+            
+            print(f"\n✅ Settled {settled_count} bets with real Google results")
+            if failed_count > 0:
+                print(f"❌ Failed to get results for {failed_count} bets (will be excluded from analysis)")
+            print()
         
         # Print Google Search API statistics if used
         if self.use_google_search and self.google_scraper:
@@ -1023,21 +1085,15 @@ class HistoricalBacktester:
             'pending_bets_list': pending_bets
         }
     
-    def plot_results(self, save_path: str = 'backtest_chart.png', show_monte_carlo: bool = False):
+    def plot_results(self, save_path: str = 'backtest_chart.png'):
         """
         Create a graph showing bankroll progression over time.
         
         Args:
             save_path: Path to save the chart image
-            show_monte_carlo: If True, plot all Monte Carlo simulations
         """
         try:
             print(f"\n📊 Generating bankroll chart...")
-            
-            if show_monte_carlo and self.all_simulations:
-                print(f"   Plotting {len(self.all_simulations)} Monte Carlo simulations...")
-                self._plot_monte_carlo(save_path)
-                return
             
             print(f"   Timestamps: {len(self.bankroll_timestamps)}")
             print(f"   Bankroll history: {len(self.bankroll_history)}")
@@ -1145,355 +1201,6 @@ class HistoricalBacktester:
             print(f"   ❌ Error generating chart: {e}")
             import traceback
             traceback.print_exc()
-    
-    def _plot_monte_carlo(self, save_path: str):
-        """Plot all Monte Carlo simulations together."""
-        import numpy as np
-        
-        # Create figure
-        plt.figure(figsize=(16, 10))
-        
-        all_final_bankrolls = []
-        
-        # Collect all simulation data for percentile calculation
-        simulation_data = []
-        
-        # Plot each simulation
-        for i, sim in enumerate(self.all_simulations):
-            # Prepend initial timestamp for each simulation
-            if sim['timestamps']:
-                first_timestamp = self._parse_timestamp(sim['timestamps'][0])
-                initial_timestamp = first_timestamp - timedelta(minutes=1)
-            else:
-                initial_timestamp = datetime.now()
-            
-            all_timestamps = [initial_timestamp] + [self._parse_timestamp(ts) for ts in sim['timestamps']]
-            dates = all_timestamps
-            
-            # Sort by timestamp
-            sorted_data = sorted(zip(dates, sim['history']), key=lambda x: x[0])
-            dates = [d for d, _ in sorted_data]
-            bankroll_values = [b for _, b in sorted_data]
-            
-            # Aggregate by hour
-            from collections import OrderedDict
-            hourly_data = OrderedDict()
-            for date, bankroll in zip(dates, bankroll_values):
-                # Round down to the hour
-                hour_key = date.replace(minute=0, second=0, microsecond=0)
-                hourly_data[hour_key] = bankroll
-            
-            plot_dates = list(hourly_data.keys())
-            plot_bankroll = list(hourly_data.values())
-            
-            # Apply smoothing
-            if len(plot_bankroll) > 3:
-                window = min(3, len(plot_bankroll) // 5)
-                if window > 1:
-                    smoothed = np.convolve(plot_bankroll, np.ones(window)/window, mode='valid')
-                    offset = window // 2
-                    smoothed_dates = plot_dates[offset:offset+len(smoothed)]
-                    plot_dates = smoothed_dates
-                    plot_bankroll = smoothed.tolist()
-            
-            # Store for percentile calculations
-            simulation_data.append({'dates': plot_dates, 'bankroll': plot_bankroll})
-            
-            # Plot with lower transparency
-            alpha = 0.15 if len(self.all_simulations) > 10 else 0.25
-            plt.plot(plot_dates, plot_bankroll, linewidth=1, alpha=alpha, color='#2E86AB', zorder=1)
-            
-            all_final_bankrolls.append(sim['history'][-1])
-        
-        # Calculate percentile bands over time
-        # Find common time points
-        all_dates = set()
-        for sim_data in simulation_data:
-            all_dates.update(sim_data['dates'])
-        common_dates = sorted(list(all_dates))
-        
-        # Interpolate all simulations to common dates
-        from collections import defaultdict
-        bankrolls_at_time = defaultdict(list)
-        
-        for sim_data in simulation_data:
-            dates = sim_data['dates']
-            bankroll = sim_data['bankroll']
-            
-            for target_date in common_dates:
-                # Find closest value or interpolate
-                if target_date in dates:
-                    idx = dates.index(target_date)
-                    bankrolls_at_time[target_date].append(bankroll[idx])
-                else:
-                    # Find surrounding dates for interpolation
-                    before_dates = [d for d in dates if d <= target_date]
-                    after_dates = [d for d in dates if d > target_date]
-                    
-                    if before_dates and after_dates:
-                        before_date = max(before_dates)
-                        after_date = min(after_dates)
-                        before_idx = dates.index(before_date)
-                        after_idx = dates.index(after_date)
-                        
-                        # Linear interpolation
-                        time_fraction = (target_date - before_date).total_seconds() / (after_date - before_date).total_seconds()
-                        interp_value = bankroll[before_idx] + time_fraction * (bankroll[after_idx] - bankroll[before_idx])
-                        bankrolls_at_time[target_date].append(interp_value)
-                    elif before_dates:
-                        bankrolls_at_time[target_date].append(bankroll[dates.index(max(before_dates))])
-                    elif after_dates:
-                        bankrolls_at_time[target_date].append(bankroll[dates.index(min(after_dates))])
-        
-        # Calculate percentiles at each time point
-        percentile_dates = []
-        median_values = []
-        percentile_values = {i: [] for i in range(0, 101, 10)}  # 0-10, 10-20, ..., 90-100
-        
-        for date in common_dates:
-            if len(bankrolls_at_time[date]) >= 3:  # Need at least 3 points for meaningful percentiles
-                percentile_dates.append(date)
-                median_values.append(np.median(bankrolls_at_time[date]))
-                # Calculate all percentiles in 10% increments
-                for p in range(0, 101, 10):
-                    percentile_values[p].append(np.percentile(bankrolls_at_time[date], p))
-        
-        # Plot overlapping percentile bands (from widest to narrowest)
-        if percentile_dates:
-            # Define colors from light to darker (outermost to innermost bands)
-            colors = [
-                '#E8F4F8',  # 0-10 / 90-100 (lightest)
-                '#D1E9F1',  # 10-20 / 80-90
-                '#BADEE9',  # 20-30 / 70-80
-                '#A3D3E2',  # 30-40 / 60-70
-                '#8BC8DB',  # 40-50 / 50-60 (middle, darkest)
-            ]
-            
-            # Plot from outermost to innermost
-            for i in range(5):
-                lower_p = i * 10
-                upper_p = 100 - (i * 10)
-                
-                plt.fill_between(percentile_dates, 
-                               percentile_values[lower_p], 
-                               percentile_values[upper_p], 
-                               alpha=0.5, 
-                               color=colors[i], 
-                               label=f'{lower_p}th-{upper_p}th Percentile',
-                               zorder=2+i)
-            
-            # Plot median line as highlighted overlay
-            plt.plot(percentile_dates, median_values, 
-                    linewidth=3, color='#FFA500', alpha=0.9,
-                    label='Median Path', zorder=10)
-        
-        # Calculate statistics
-        avg_final = np.mean(all_final_bankrolls)
-        median_final = np.median(all_final_bankrolls)
-        percentile_5 = np.percentile(all_final_bankrolls, 5)
-        percentile_95 = np.percentile(all_final_bankrolls, 95)
-        
-        avg_return = ((avg_final - self.initial_bankroll) / self.initial_bankroll) * 100
-        
-        # Add horizontal lines
-        plt.axhline(y=self.initial_bankroll, color='gray', linestyle='--', 
-                    linewidth=2, alpha=0.7, label='Initial Bankroll', zorder=2)
-        plt.axhline(y=avg_final, color='red', linestyle='-', 
-                    linewidth=2, alpha=0.8, label=f'Average Final: £{avg_final:.2f}', zorder=2)
-        
-        # Title with statistics
-        plt.title(f'Monte Carlo Backtest Results ({len(self.all_simulations)} Simulations)\n'
-                  f'Avg Return: {avg_return:+.2f}% | Median: £{median_final:.2f} | '
-                  f'5th-95th Percentile: £{percentile_5:.2f} - £{percentile_95:.2f}',
-                  fontsize=14, fontweight='bold', pad=20)
-        
-        plt.xlabel('Date', fontsize=12, fontweight='bold')
-        plt.ylabel('Bankroll (£)', fontsize=12, fontweight='bold')
-        plt.grid(True, alpha=0.3, linestyle='--')
-        plt.legend(loc='best', fontsize=10, framealpha=0.9)
-        
-        # Format x-axis
-        plt.gcf().autofmt_xdate()
-        from matplotlib.dates import DateFormatter
-        ax = plt.gca()
-        ax.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
-        
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"   ✅ Monte Carlo chart saved to: {save_path}")
-        print(f"   📈 Statistics:")
-        print(f"      Average Final: £{avg_final:.2f} ({avg_return:+.2f}%)")
-        print(f"      Median Final: £{median_final:.2f}")
-        print(f"      5th Percentile: £{percentile_5:.2f}")
-        print(f"      95th Percentile: £{percentile_95:.2f}")
-        
-        plt.close()
-    
-    def monte_carlo_backtest(self, sports: List[str], start_date: str, end_date: str,
-                            snapshot_interval_hours: int = 12, n_simulations: int = 100) -> Dict:
-        """
-        Run multiple Monte Carlo simulations of the backtest.
-        
-        Args:
-            sports: List of sport keys (e.g., ['soccer_epl', 'basketball_nba'])
-            start_date: Start date (YYYY-MM-DD)
-            end_date: End date (YYYY-MM-DD)
-            snapshot_interval_hours: Hours between snapshots
-            n_simulations: Number of Monte Carlo simulations to run
-            
-        Returns:
-            Aggregated results across all simulations
-        """
-        # Support single sport string for backward compatibility
-        if isinstance(sports, str):
-            sports = [sports]
-        
-        print(f"\n{'='*80}")
-        print(f"MONTE CARLO BACKTESTING - {n_simulations} SIMULATIONS")
-        print(f"{'='*80}")
-        print(f"Sports: {', '.join(sports)}")
-        print(f"Date Range: {start_date} to {end_date}")
-        print(f"Initial Bankroll: £{self.initial_bankroll:.2f}")
-        print(f"Kelly Fraction: {self.scanner.kelly_fraction}")
-        print(f"Min EV: {self.scanner.min_ev_threshold*100:.1f}%")
-        print(f"Min True Probability: {self.scanner.min_true_probability*100:.1f}%")
-        if self.scanner.min_kelly_percentage > 0:
-            print(f"Min Kelly Percentage: {self.scanner.min_kelly_percentage*100:.1f}%")
-        if self.scanner.max_odds > 0:
-            print(f"Max Odds: {self.scanner.max_odds:.1f}")
-        print(f"Sharp Books: {', '.join(self.scanner.sharp_books)}")
-        print(f"Betting Bookmakers: {', '.join(self.scanner.betting_bookmakers)}")
-        print(f"One Bet Per Game: {self.scanner.one_bet_per_game}")
-        print(f"Note: Results simulated based on true probabilities (historical scores not available)")
-        print(f"{'='*80}\n")
-        
-        # Store all simulation results
-        all_results = []
-        
-        # Run first simulation to get opportunities data (fetches from API/cache)
-        print(f"[Simulation 1/{n_simulations}] Running base simulation...")
-        # Note: Historical scores may not be available, so we simulate results
-        first_result = self.backtest(sports, start_date, end_date, snapshot_interval_hours, simulate_on_missing=True)
-        
-        if not first_result:
-            print("❌ Base simulation returned no results. Cannot run Monte Carlo simulation.")
-            return {}
-        
-        all_results.append(first_result)
-        
-        # Store ONLY the settled bets for reuse (ignore pending bets)
-        base_opportunities = [b for b in self.bets_placed if b.get('result') is not None]
-        pending_count = len([b for b in self.bets_placed if b.get('result') is None])
-        
-        if not base_opportunities:
-            print("❌ No settled betting opportunities found. Cannot run Monte Carlo simulation.")
-            if pending_count > 0:
-                print(f"   All {pending_count} bets are still pending (games haven't finished yet).")
-                print(f"   Try extending the end date or waiting for more games to complete.")
-            return {}
-        
-        print(f"\n✅ Found {len(base_opportunities)} settled betting opportunities")
-        if pending_count > 0:
-            print(f"   (Excluding {pending_count} pending bets that haven't settled)")
-        print(f"Running {n_simulations - 1} additional Monte Carlo simulations...\n")
-        
-        # Run remaining simulations
-        import random
-        for sim_num in range(2, n_simulations + 1):
-            self.reset_state()
-            
-            # Re-simulate outcomes for each opportunity
-            for opp in base_opportunities:
-                # Simulate result based on true probability
-                result = 'won' if random.random() < opp['true_probability'] else 'lost'
-                # Use the bet placement time, not the game commence time
-                self.place_bet(opp.copy(), result, bet_timestamp=opp.get('bet_placed_at', opp.get('commence_time')))
-            
-            # Store this simulation
-            self.all_simulations.append({
-                'history': self.bankroll_history.copy(),
-                'timestamps': self.bankroll_timestamps.copy(),
-                'final_bankroll': self.current_bankroll
-            })
-            
-            all_results.append({
-                'final_bankroll': self.current_bankroll,
-                'total_return_pct': ((self.current_bankroll - self.initial_bankroll) / self.initial_bankroll) * 100
-            })
-        
-        # Also add first simulation to all_simulations (use bet placement timestamps)
-        self.all_simulations.insert(0, {
-            'history': first_result['bankroll_history'],
-            'timestamps': [bet.get('bet_placed_at', bet.get('commence_time', '')) for bet in base_opportunities if bet.get('result') is not None],
-            'final_bankroll': first_result['final_bankroll']
-        })
-        
-        # Calculate aggregate statistics
-        import numpy as np
-        final_bankrolls = [r['final_bankroll'] for r in all_results]
-        returns = [r['total_return_pct'] for r in all_results]
-        
-        aggregate = {
-            'n_simulations': n_simulations,
-            'initial_bankroll': self.initial_bankroll,
-            'avg_final_bankroll': np.mean(final_bankrolls),
-            'median_final_bankroll': np.median(final_bankrolls),
-            'std_final_bankroll': np.std(final_bankrolls),
-            'min_final_bankroll': np.min(final_bankrolls),
-            'max_final_bankroll': np.max(final_bankrolls),
-            'percentile_5': np.percentile(final_bankrolls, 5),
-            'percentile_95': np.percentile(final_bankrolls, 95),
-            'avg_return_pct': np.mean(returns),
-            'median_return_pct': np.median(returns),
-            'std_return_pct': np.std(returns),
-            'min_return_pct': np.min(returns),
-            'max_return_pct': np.max(returns),
-            'probability_profit': sum(1 for r in returns if r > 0) / len(returns) * 100,
-            'total_bets': len(base_opportunities),
-            'first_simulation': first_result
-        }
-        
-        # Print summary
-        print(f"\n{'='*80}")
-        print(f"MONTE CARLO RESULTS SUMMARY")
-        print(f"{'='*80}\n")
-        print(f"Simulations: {n_simulations}")
-        print(f"Total Bets per Simulation: {aggregate['total_bets']}")
-        print(f"\nFinal Bankroll Statistics:")
-        print(f"  Average: £{aggregate['avg_final_bankroll']:.2f}")
-        print(f"  Median: £{aggregate['median_final_bankroll']:.2f}")
-        print(f"  Std Dev: £{aggregate['std_final_bankroll']:.2f}")
-        print(f"  Min: £{aggregate['min_final_bankroll']:.2f}")
-        print(f"  Max: £{aggregate['max_final_bankroll']:.2f}")
-        print(f"  5th Percentile: £{aggregate['percentile_5']:.2f}")
-        print(f"  95th Percentile: £{aggregate['percentile_95']:.2f}")
-        print(f"\nReturn Statistics:")
-        print(f"  Average: {aggregate['avg_return_pct']:+.2f}%")
-        print(f"  Median: {aggregate['median_return_pct']:+.2f}%")
-        print(f"  Std Dev: {aggregate['std_return_pct']:.2f}%")
-        print(f"  Min: {aggregate['min_return_pct']:+.2f}%")
-        print(f"  Max: {aggregate['max_return_pct']:+.2f}%")
-        print(f"\nProbability of Profit: {aggregate['probability_profit']:.1f}%")
-        
-        # Show per-sport breakdown
-        sports_in_bets = set(b.get('sport') for b in base_opportunities if b.get('sport'))
-        if len(sports_in_bets) > 0:
-            print(f"\nPer-Sport Breakdown:")
-            for sport in sorted(sports_in_bets):
-                sport_bets = [b for b in base_opportunities if b.get('sport') == sport]
-                sport_count = len(sport_bets)
-                sport_avg_ev = np.mean([b.get('ev', 0) for b in sport_bets]) * 100
-                sport_avg_prob = np.mean([b.get('true_probability', 0) for b in sport_bets]) * 100
-                sport_avg_odds = np.mean([b.get('odds', 0) for b in sport_bets])
-                print(f"  {sport}:")
-                print(f"    Bets: {sport_count}")
-                print(f"    Avg EV: {sport_avg_ev:.2f}%")
-                print(f"    Avg True Prob: {sport_avg_prob:.1f}%")
-                print(f"    Avg Odds: {sport_avg_odds:.2f}")
-        
-        print(f"\n{'='*80}\n")
-        
-        return aggregate
     
     def export_bets_to_csv(self, filename: str = 'data/backtest_bet_history.csv'):
         """
@@ -1642,13 +1349,6 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     )
     
     parser.add_argument(
-        '--monte-carlo', '-mc',
-        type=int,
-        default=0,
-        help='Run Monte Carlo simulation with N iterations (default: 0 = single run)'
-    )
-    
-    parser.add_argument(
         '--google-search',
         action='store_true',
         help='Use SerpAPI to fetch real game results from Google Sports (requires SERPAPI_KEY in .env, 100 free/month)'
@@ -1700,48 +1400,31 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     # Run backtest with all sports together
     backtester = HistoricalBacktester(use_google_search=args.google_search)
     
-    if args.monte_carlo > 0:
-        # Run Monte Carlo simulation
-        results = backtester.monte_carlo_backtest(
-            sports=sports,
-            start_date=start_date,
-            end_date=end_date,
-            snapshot_interval_hours=args.interval,
-            n_simulations=args.monte_carlo
-        )
+    # Run backtest with all sports together
+    backtester = HistoricalBacktester(use_google_search=args.google_search)
+    
+    # Run single backtest with Google results
+    results = backtester.backtest(
+        sports=sports,
+        start_date=start_date,
+        end_date=end_date,
+        snapshot_interval_hours=args.interval
+    )
+    
+    if results:
+        backtester.save_results(results, args.output)
         
-        if results:
-            # Save results
-            backtester.save_results(results, args.output)
-            
-            # Generate Monte Carlo chart
-            print("\n🎨 Preparing to generate Monte Carlo visualization...")
-            chart_path = args.output.replace('.json', '_monte_carlo_chart.png')
-            print(f"   Chart will be saved to: {chart_path}")
-            backtester.plot_results(chart_path, show_monte_carlo=True)
-    else:
-        # Run single backtest
-        results = backtester.backtest(
-            sports=sports,
-            start_date=start_date,
-            end_date=end_date,
-            snapshot_interval_hours=args.interval
-        )
+        # Generate chart
+        print("\n🎨 Preparing to generate visualization...")
+        chart_path = args.output.replace('.json', '_chart.png')
+        print(f"   Chart will be saved to: {chart_path}")
+        backtester.plot_results(chart_path)
         
-        if results:
-            backtester.save_results(results, args.output)
-            
-            # Generate chart
-            print("\n🎨 Preparing to generate visualization...")
-            chart_path = args.output.replace('.json', '_chart.png')
-            print(f"   Chart will be saved to: {chart_path}")
-            backtester.plot_results(chart_path)
-            
-            print("\n💡 TIP: Compare these results with your simulator:")
-            print(f"   Actual Avg EV: {results['avg_ev']*100:.2f}% vs Simulator: 2.91%")
-            print(f"   Actual Avg Odds: {results['avg_odds']:.2f} vs Simulator: 1.235")
-            print(f"   Actual Win Rate: {results['win_rate']*100:.1f}% vs Expected: 83%")
-            print(f"   Actual Avg True Prob: {results['avg_true_prob']*100:.1f}% vs Simulator: 83%")
+        print("\n💡 TIP: Compare these results with your simulator:")
+        print(f"   Actual Avg EV: {results['avg_ev']*100:.2f}% vs Simulator: 2.91%")
+        print(f"   Actual Avg Odds: {results['avg_odds']:.2f} vs Simulator: 1.235")
+        print(f"   Actual Win Rate: {results['win_rate']*100:.1f}% vs Expected: 83%")
+        print(f"   Actual Avg True Prob: {results['avg_true_prob']*100:.1f}% vs Simulator: 83%")
 
 
 if __name__ == '__main__':
