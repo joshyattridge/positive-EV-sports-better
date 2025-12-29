@@ -61,6 +61,46 @@ class GoogleSearchScraper:
         import hashlib
         return hashlib.md5(query.encode()).hexdigest()
     
+    def _get_game_cache_key(self, away_team: str, home_team: str, game_date: str) -> str:
+        """
+        Generate a normalized cache key for a game based on teams and date.
+        This ensures cache hits regardless of query format variations.
+        
+        Args:
+            away_team: Away team name
+            home_team: Home team name
+            game_date: Game date in ISO format (YYYY-MM-DD or ISO timestamp)
+        
+        Returns:
+            MD5 hash of normalized game identifier
+        """
+        import hashlib
+        
+        # Normalize date to YYYY-MM-DD format
+        try:
+            if 'T' in game_date or 'Z' in game_date:
+                # ISO timestamp format
+                date_obj = datetime.fromisoformat(game_date.replace('Z', '+00:00'))
+            else:
+                # Already in YYYY-MM-DD format
+                date_obj = datetime.strptime(game_date[:10], '%Y-%m-%d')
+            normalized_date = date_obj.strftime('%Y-%m-%d')
+        except:
+            # Fallback: use first 10 chars
+            normalized_date = game_date[:10]
+        
+        # Normalize team names (lowercase, strip whitespace)
+        team1 = away_team.lower().strip()
+        team2 = home_team.lower().strip()
+        
+        # Sort teams alphabetically to handle order variations
+        teams = sorted([team1, team2])
+        
+        # Create normalized key: date_team1_team2
+        normalized_key = f"{normalized_date}_{teams[0]}_{teams[1]}_serpapi"
+        
+        return hashlib.md5(normalized_key.encode()).hexdigest()
+    
     def _load_from_cache(self, cache_key: str) -> Optional[Dict]:
         """Load search result from cache."""
         cache_file = self.cache_dir / f"{cache_key}.json"
@@ -381,17 +421,39 @@ class GoogleSearchScraper:
                        game_date: str) -> Optional[Dict]:
         """
         Get game result by searching Google via SerpAPI.
+        Uses normalized cache keys to ensure cache hits across query variations.
         
         Args:
             sport: Sport name (e.g., "NFL", "NBA", "Premier League")
             away_team: Away team name
             home_team: Home team name
-            game_date: Game date (YYYY-MM-DD format)
+            game_date: Game date (YYYY-MM-DD format or ISO timestamp)
             
         Returns:
             Dict with keys: away_score, home_score, winner, source, query
             Or None if not found
         """
+        # Generate normalized cache key for this game
+        game_cache_key = self._get_game_cache_key(away_team, home_team, game_date)
+        
+        # Check normalized cache first
+        cached_result = self._load_from_cache(game_cache_key)
+        if cached_result:
+            self.stats['cache_hits'] += 1
+            parsed_score = self.parse_score_from_results(cached_result, away_team, home_team)
+            
+            if parsed_score:
+                away_score, home_score, winner = parsed_score
+                self.stats['successful_parses'] += 1
+                
+                return {
+                    'away_score': away_score,
+                    'home_score': home_score,
+                    'winner': winner,
+                    'source': 'serpapi',
+                    'query': 'cached'
+                }
+        
         # Format the search query with exact dates
         # Try multiple query formats to maximize chances of finding scores
         try:
@@ -413,10 +475,10 @@ class GoogleSearchScraper:
             f"{sport} {away_team} vs {home_team} {date_short}",
         ]
         
-        # First pass: Check cache only (avoid unnecessary API calls)
+        # First: Check old cache files for any of these query variations (no API calls)
         for query in queries:
-            cache_key = self._get_cache_key(query + "_serpapi")
-            cached_result = self._load_from_cache(cache_key)
+            old_cache_key = self._get_cache_key(query + "_serpapi")
+            cached_result = self._load_from_cache(old_cache_key)
             
             if cached_result:
                 self.stats['cache_hits'] += 1
@@ -426,18 +488,21 @@ class GoogleSearchScraper:
                     away_score, home_score, winner = parsed_score
                     self.stats['successful_parses'] += 1
                     
+                    # Save to normalized cache for next time
+                    self._save_to_cache(game_cache_key, cached_result)
+                    
                     return {
                         'away_score': away_score,
                         'home_score': home_score,
                         'winner': winner,
                         'source': 'serpapi',
-                        'query': query
+                        'query': f'cached:{query}'
                     }
         
-        # Second pass: Try API calls for uncached queries
+        # Second: If not in any cache, try API calls (only if needed)
         for query in queries:
-            # This will use cache or make API call
-            search_results = self.search_sports_score(query)
+            # Make API call
+            search_results = self.search_sports_score(query, use_cache=False)
             
             if not search_results:
                 continue
@@ -448,6 +513,9 @@ class GoogleSearchScraper:
             if parsed_score:
                 away_score, home_score, winner = parsed_score
                 self.stats['successful_parses'] += 1
+                
+                # Save to normalized cache key for future lookups
+                self._save_to_cache(game_cache_key, search_results)
                 
                 return {
                     'away_score': away_score,
