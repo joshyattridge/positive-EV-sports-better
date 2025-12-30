@@ -1273,15 +1273,29 @@ class HistoricalBacktester:
                     plot_bankroll = smoothed.tolist()
                     print(f"   Applied smoothing with window size {window}")
             
-            # Create figure with larger size
-            plt.figure(figsize=(14, 8))
+            # Calculate daily bet volume
+            bet_volume_by_day = OrderedDict()
+            for bet in self.bets_placed:
+                if 'bet_placed_at' in bet and bet['bet_placed_at']:
+                    bet_date = self._parse_timestamp(bet['bet_placed_at'])
+                    # Group by day
+                    day_key = bet_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    bet_volume_by_day[day_key] = bet_volume_by_day.get(day_key, 0) + 1
             
-            # Plot smoothed bankroll progression
-            plt.plot(plot_dates, plot_bankroll, 
+            volume_dates = list(bet_volume_by_day.keys())
+            volume_counts = list(bet_volume_by_day.values())
+            print(f"   Calculated bet volume for {len(volume_dates)} days")
+            
+            # Create figure with subplots - bankroll on top, volume on bottom
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), 
+                                           gridspec_kw={'height_ratios': [3, 1]})
+            
+            # Plot smoothed bankroll progression on top subplot
+            ax1.plot(plot_dates, plot_bankroll, 
                     linewidth=3, color='#2E86AB', label='Bankroll (smoothed)', alpha=0.9)
             
             # Add horizontal line for initial bankroll
-            plt.axhline(y=self.initial_bankroll, color='gray', linestyle='--', 
+            ax1.axhline(y=self.initial_bankroll, color='gray', linestyle='--', 
                         linewidth=1, alpha=0.7, label='Initial Bankroll')
             
             # Calculate statistics for annotations
@@ -1311,24 +1325,30 @@ class HistoricalBacktester:
             roi = (total_profit / total_staked * 100) if total_staked > 0 else 0
             
             # Add annotations for key stats (multi-line title for readability)
-            plt.title(f'Backtest Results: Bankroll Progression\n'
+            ax1.set_title(f'Backtest Results: Bankroll Progression\n'
                       f'Bets: {total_bets} | Win Rate: {win_rate:.1f}% | ROI: {roi:.2f}% | '
                       f'Return: {total_return:+.2f}%\n'
                       f'Max Drawdown: {max_drawdown_pct:.2f}% | Final: £{final_bankroll:.2f} | '
                       f'Peak: £{max_bankroll:.2f}',
                       fontsize=13, fontweight='bold', pad=20)
             
-            # Formatting
-            plt.xlabel('Date', fontsize=12, fontweight='bold')
-            plt.ylabel('Bankroll (£)', fontsize=12, fontweight='bold')
-            plt.grid(True, alpha=0.3, linestyle='--')
-            plt.legend(loc='best', fontsize=10)
+            # Formatting for top subplot
+            ax1.set_ylabel('Bankroll (£)', fontsize=12, fontweight='bold')
+            ax1.grid(True, alpha=0.3, linestyle='--')
+            ax1.legend(loc='best', fontsize=10)
             
-            # Format x-axis dates
-            plt.gcf().autofmt_xdate()
+            # Plot bet volume bar chart on bottom subplot
+            ax2.bar(volume_dates, volume_counts, width=0.8, 
+                   color='#A23B72', alpha=0.7, edgecolor='#6B1E45', linewidth=0.5)
+            ax2.set_ylabel('Bets Placed', fontsize=12, fontweight='bold')
+            ax2.set_xlabel('Date', fontsize=12, fontweight='bold')
+            ax2.grid(True, alpha=0.3, linestyle='--', axis='y')
+            
+            # Format x-axis dates for both subplots
+            fig.autofmt_xdate()
             from matplotlib.dates import DateFormatter
-            ax = plt.gca()
-            ax.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+            ax1.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+            ax2.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
             
             # Tight layout to prevent label cutoff
             plt.tight_layout()
