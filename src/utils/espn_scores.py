@@ -25,11 +25,15 @@ class ESPNScoresFetcher:
         'americanfootball_nfl_preseason': ('football', 'nfl'),
         'americanfootball_ncaaf': ('football', 'college-football'),
         'americanfootball_cfl': ('football', 'cfl'),
+        'americanfootball_ufl': ('football', 'ufl'),
         
         # Baseball
         'baseball_mlb': ('baseball', 'mlb'),
         'baseball_mlb_preseason': ('baseball', 'mlb'),
         'baseball_ncaa': ('baseball', 'college-baseball'),
+        'baseball_npb': ('baseball', 'jpn.1'),  # Japan
+        'baseball_kbo': ('baseball', 'kor.1'),  # Korea
+        'baseball_milb': ('baseball', 'milb'),  # Minor League Baseball
         
         # Basketball
         'basketball_nba': ('basketball', 'nba'),
@@ -37,10 +41,25 @@ class ESPNScoresFetcher:
         'basketball_wnba': ('basketball', 'wnba'),
         'basketball_ncaab': ('basketball', 'mens-college-basketball'),
         'basketball_wncaab': ('basketball', 'womens-college-basketball'),
+        'basketball_euroleague': ('basketball', 'euro'),
+        'basketball_nbl': ('basketball', 'nbl'),  # Australia
         
         # Ice Hockey
         'icehockey_nhl': ('hockey', 'nhl'),
         'icehockey_nhl_preseason': ('hockey', 'nhl'),
+        'icehockey_ahl': ('hockey', 'ahl'),
+        'icehockey_sweden_hockey_league': ('hockey', 'swe.1'),
+        'icehockey_sweden_allsvenskan': ('hockey', 'swe.2'),
+        'icehockey_liiga': ('hockey', 'fin.1'),  # American Hockey League
+        
+        # Australian Rules Football
+        'aussierules_afl': ('football', 'afl'),
+        
+        # Rugby League
+        'rugbyleague_nrl': ('rugby-league', 'nrl'),
+        
+        # Rugby Union
+        'rugbyunion_six_nations': ('rugby-union', 'six-nations'),
         
         # Soccer - Major Leagues
         'soccer_epl': ('soccer', 'eng.1'),  # English Premier League
@@ -68,23 +87,36 @@ class ESPNScoresFetcher:
         'soccer_norway_eliteserien': ('soccer', 'nor.1'),
         'soccer_poland_ekstraklasa': ('soccer', 'pol.1'),
         'soccer_brazil_campeonato': ('soccer', 'bra.1'),
+        'soccer_brazil_serie_b': ('soccer', 'bra.2'),
         'soccer_argentina_primera_division': ('soccer', 'arg.1'),
         'soccer_mexico_ligamx': ('soccer', 'mex.1'),
         'soccer_usa_mls': ('soccer', 'usa.1'),
         'soccer_australia_aleague': ('soccer', 'aus.1'),
         'soccer_japan_j_league': ('soccer', 'jpn.1'),
+        'soccer_korea_kleague1': ('soccer', 'kor.1'),
         'soccer_china_superleague': ('soccer', 'chn.1'),
+        'soccer_league_of_ireland': ('soccer', 'irl.1'),
+        'soccer_sweden_superettan': ('soccer', 'swe.2'),
+        'soccer_finland_veikkausliiga': ('soccer', 'fin.1'),
         
         # Soccer - Tournaments
         'soccer_uefa_champs_league': ('soccer', 'uefa.champions'),
         'soccer_uefa_europa_league': ('soccer', 'uefa.europa'),
         'soccer_uefa_europa_conference_league': ('soccer', 'uefa.europa.conf'),
+        'soccer_uefa_nations_league': ('soccer', 'uefa.nations'),
         'soccer_fa_cup': ('soccer', 'eng.fa'),
         'soccer_england_efl_cup': ('soccer', 'eng.league_cup'),
         'soccer_fifa_world_cup': ('soccer', 'fifa.world'),
         'soccer_uefa_european_championship': ('soccer', 'uefa.euro'),
         'soccer_conmebol_copa_america': ('soccer', 'conmebol.america'),
+        'soccer_conmebol_copa_libertadores': ('soccer', 'conmebol.libertadores'),
+        'soccer_conmebol_copa_sudamericana': ('soccer', 'conmebol.sudamericana'),
         'soccer_concacaf_gold_cup': ('soccer', 'concacaf.gold'),
+        'soccer_concacaf_leagues_cup': ('soccer', 'concacaf.leagues.cup'),
+        'soccer_africa_cup_of_nations': ('soccer', 'caf.nations'),
+        'soccer_fifa_world_cup_womens': ('soccer', 'fifa.wwc'),
+        'soccer_fifa_club_world_cup': ('soccer', 'fifa.cwc'),
+        'soccer_uefa_champs_league_women': ('soccer', 'uefa.champions.women'),
         
         # Tennis - Major Tournaments
         'tennis_atp_aus_open_singles': ('tennis', 'atp'),

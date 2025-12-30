@@ -598,6 +598,86 @@ class HistoricalBacktester:
         
         return opportunities
     
+    def _prefetch_game_results(self, bets: List[Dict], current_time: datetime):
+        """
+        Pre-fetch all unique game results in parallel to speed up settlement.
+        Stores results in memory cache for instant lookup during settlement.
+        
+        Args:
+            bets: List of bets to fetch results for
+            current_time: Current time in backtest for look-ahead protection
+        """
+        # Extract unique games that need results
+        unique_games = {}
+        for bet in bets:
+            game_str = bet.get('game', '')
+            if ' @ ' not in game_str:
+                continue
+            
+            # Check if game has completed (same logic as determine_bet_result)
+            commence_time = bet.get('commence_time', '')
+            if commence_time and current_time:
+                try:
+                    if isinstance(commence_time, str):
+                        game_time = self._parse_timestamp(commence_time)
+                    else:
+                        game_time = commence_time
+                    
+                    from datetime import timedelta
+                    game_completion_time = game_time + timedelta(hours=4)
+                    
+                    # Skip games not yet completed
+                    if current_time < game_completion_time:
+                        continue
+                except Exception:
+                    continue
+            
+            # Create unique key for this game
+            away_team, home_team = game_str.split(' @ ')
+            away_team = away_team.strip()
+            home_team = home_team.strip()
+            sport = bet.get('sport', '')
+            game_date = self._parse_timestamp(bet.get('commence_time', ''))
+            
+            game_key = f"{sport}|{away_team}|{home_team}|{game_date.date()}"
+            if game_key not in unique_games:
+                unique_games[game_key] = {
+                    'sport': sport,
+                    'away_team': away_team,
+                    'home_team': home_team,
+                    'game_date': game_date
+                }
+        
+        if not unique_games:
+            return
+        
+        print(f"   Fetching results for {len(unique_games)} unique games...")
+        
+        # Fetch results sequentially to avoid rate limiting
+        results_cache = {}
+        
+        # Progress bar for fetching
+        from tqdm import tqdm
+        for game_key, game_info in tqdm(unique_games.items(), desc="Fetching results", unit="game", ncols=100):
+            try:
+                result = self.espn_scraper.get_game_result(
+                    sport=game_info['sport'],
+                    team1=game_info['away_team'],
+                    team2=game_info['home_team'],
+                    game_date=game_info['game_date']
+                )
+                
+                if result:
+                    results_cache[game_key] = result
+                    
+            except Exception as e:
+                # Silently fail for individual games
+                pass
+        
+        # Store in memory cache
+        self.memory_cache.update(results_cache)
+        print(f"   ✅ Cached {len(results_cache)} game results in memory\n")
+    
     def determine_bet_result(self, bet: Dict, scores_data: Dict, current_time: Optional[datetime] = None) -> Optional[str]:
         """
         Determine if a bet won or lost based on actual game results.
@@ -658,13 +738,18 @@ class HistoricalBacktester:
                     if commence_time_str:
                         game_date = self._parse_timestamp(commence_time_str)
                         
-                        # Fetch result from ESPN (falls back to SerpAPI automatically)
-                        result = self.espn_scraper.get_game_result(
-                            sport=sport,
-                            team1=away_team,
-                            team2=home_team,
-                            game_date=game_date
-                        )
+                        # Check memory cache first (from prefetch)
+                        game_key = f"{sport}|{away_team}|{home_team}|{game_date.date()}"
+                        result = self.memory_cache.get(game_key)
+                        
+                        # If not in cache, fetch it (fallback for edge cases)
+                        if not result:
+                            result = self.espn_scraper.get_game_result(
+                                sport=sport,
+                                team1=away_team,
+                                team2=home_team,
+                                game_date=game_date
+                            )
                         
                         if result and 'home_score' in result and 'away_score' in result:
                             home_score = result['home_score']
@@ -937,6 +1022,12 @@ class HistoricalBacktester:
             print(f"SETTLING PENDING BETS WITH GOOGLE RESULTS")
             print(f"{'='*80}")
             print(f"Fetching real results for {len(pending_bets)} pending bets...\n")
+            
+            # Pre-fetch all unique game results in parallel to speed up settlement
+            if self.use_google_search and self.espn_scraper:
+                print("⚡ Pre-fetching game results in parallel...")
+                self._prefetch_game_results(pending_bets, end)
+                print(f"✅ Pre-fetch complete. Now settling bets...\n")
             
             settled_count = 0
             failed_count = 0
