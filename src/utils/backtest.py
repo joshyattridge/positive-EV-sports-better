@@ -19,6 +19,7 @@ from pathlib import Path
 from src.core.positive_ev_scanner import PositiveEVScanner
 from src.utils.odds_utils import calculate_implied_probability, calculate_ev
 from src.utils.google_search_scraper import GoogleSearchScraper
+from src.utils.espn_scores import ESPNScoresFetcher
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from tqdm import tqdm
@@ -52,15 +53,19 @@ class HistoricalBacktester:
         # Initialize scanner (reads all parameters from .env)
         self.scanner = PositiveEVScanner(api_key=self.api_key)
         
-        # Initialize SerpAPI scraper if enabled
+        # Initialize ESPN + SerpAPI for real results if enabled
         self.use_google_search = use_google_search
         self.google_scraper = None
+        self.espn_scraper = None
         if use_google_search:
             try:
+                # Initialize SerpAPI for fallback
                 self.google_scraper = GoogleSearchScraper()
-                print(f"✅ SerpAPI enabled for real game results (Google Sports)")
+                # Initialize ESPN with SerpAPI fallback
+                self.espn_scraper = ESPNScoresFetcher(serpapi_fallback=self.google_scraper)
+                print(f"✅ ESPN API enabled for real game results (with SerpAPI fallback)")
             except ValueError as e:
-                print(f"⚠️  SerpAPI not configured: {e}")
+                print(f"⚠️  ESPN/SerpAPI not configured: {e}")
                 print(f"   Falling back to simulated results")
                 self.use_google_search = False
         
@@ -635,8 +640,8 @@ class HistoricalBacktester:
                 # If we can't parse the time, be conservative and return None
                 return None
         
-        # Try Google Search API first if enabled
-        if self.use_google_search and self.google_scraper:
+        # Try ESPN API first (with SerpAPI fallback) if enabled
+        if self.use_google_search and self.espn_scraper:
             try:
                 # Parse team names from the game string (e.g., "Buffalo Bills @ New England Patriots")
                 game_str = bet.get('game', '')
@@ -646,36 +651,59 @@ class HistoricalBacktester:
                     home_team = home_team.strip()
                     
                     # Get game date from commence_time
-                    game_date = bet.get('commence_time', '')
+                    commence_time_str = bet.get('commence_time', '')
                     sport = bet.get('sport', '')
                     
-                    # Fetch result from Google
-                    result = self.google_scraper.get_game_result(
-                        sport=sport,
-                        away_team=away_team,
-                        home_team=home_team,
-                        game_date=game_date
-                    )
-                    
-                    if result:
-                        away_score = result['away_score']
-                        home_score = result['home_score']
+                    # Parse game date
+                    if commence_time_str:
+                        game_date = self._parse_timestamp(commence_time_str)
                         
-                        # Determine winner based on market type
-                        if bet['market'] == 'h2h':
-                            outcome = bet['outcome']
+                        # Fetch result from ESPN (falls back to SerpAPI automatically)
+                        result = self.espn_scraper.get_game_result(
+                            sport=sport,
+                            team1=away_team,
+                            team2=home_team,
+                            game_date=game_date
+                        )
+                        
+                        if result and 'home_score' in result and 'away_score' in result:
+                            home_score = result['home_score']
+                            away_score = result['away_score']
+                            espn_home = result.get('home_team', home_team)
+                            espn_away = result.get('away_team', away_team)
+                            source = result.get('source', 'unknown')
                             
-                            if outcome == home_team and home_score > away_score:
-                                return 'won'
-                            elif outcome == away_team and away_score > home_score:
-                                return 'won'
-                            elif 'Draw' in outcome and home_score == away_score:
-                                return 'won'
-                            else:
-                                return 'lost'
+                            print(f"   ✓ Settled via {source.upper()}: {espn_away} {away_score} @ {espn_home} {home_score}")
+                            
+                            # Determine winner based on market type
+                            if bet['market'] == 'h2h':
+                                outcome = bet['outcome']
+                                
+                                # Match outcome to actual teams (case-insensitive partial match)
+                                outcome_lower = outcome.lower()
+                                home_lower = home_team.lower()
+                                away_lower = away_team.lower()
+                                espn_home_lower = espn_home.lower()
+                                espn_away_lower = espn_away.lower()
+                                
+                                # Determine if bet was on home or away team
+                                bet_on_home = (outcome_lower in home_lower or home_lower in outcome_lower or 
+                                              outcome_lower in espn_home_lower or espn_home_lower in outcome_lower)
+                                bet_on_away = (outcome_lower in away_lower or away_lower in outcome_lower or
+                                              outcome_lower in espn_away_lower or espn_away_lower in outcome_lower)
+                                
+                                # Check if bet won
+                                if bet_on_home and home_score > away_score:
+                                    return 'won'
+                                elif bet_on_away and away_score > home_score:
+                                    return 'won'
+                                elif 'draw' in outcome_lower and home_score == away_score:
+                                    return 'won'
+                                else:
+                                    return 'lost'
                 
             except Exception as e:
-                # If Google Search fails, fall back to scores_data
+                # If ESPN/SerpAPI fails, fall back to scores_data
                 pass
         
         # Fallback: Look up game in pre-indexed scores data
@@ -884,16 +912,9 @@ class HistoricalBacktester:
                     pending_count = 0
                     
                     for opp in new_opportunities:
-                        # Determine result if available (pass current backtest time to prevent look-ahead bias)
-                        result = self.determine_bet_result(opp, scores_data, current_time=current)
-                        
-                        # No simulation - only use real Google results
-                        if result == 'won':
-                            won_count += 1
-                        elif result == 'lost':
-                            lost_count += 1
-                        else:
-                            pending_count += 1
+                        # Don't settle during backtest - settle all at the end
+                        result = None
+                        pending_count += 1
                         
                         # Store when this bet was placed (discovered), not game time
                         opp['bet_placed_at'] = timestamp
@@ -920,7 +941,11 @@ class HistoricalBacktester:
             settled_count = 0
             failed_count = 0
             
-            for bet in pending_bets:
+            # Create progress bar for settling bets
+            settle_pbar = tqdm(pending_bets, desc="Settling bets", unit="bet", ncols=120,
+                             bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+            
+            for bet in settle_pbar:
                 # Use end time as current_time to check if game has completed
                 result = self.determine_bet_result(bet, scores_data, current_time=end)
                 
@@ -947,16 +972,20 @@ class HistoricalBacktester:
                     settled_count += 1
                 else:
                     failed_count += 1
-                    print(f"   ⚠️  Could not get result for: {bet.get('game')} ({bet.get('sport')})")
+                
+                # Update progress bar with current stats
+                settle_pbar.set_postfix({'settled': settled_count, 'failed': failed_count})
+            
+            settle_pbar.close()
             
             print(f"\n✅ Settled {settled_count} bets with real Google results")
             if failed_count > 0:
                 print(f"❌ Failed to get results for {failed_count} bets (will be excluded from analysis)")
             print()
         
-        # Print Google Search API statistics if used
-        if self.use_google_search and self.google_scraper:
-            self.google_scraper.print_stats()
+        # Print ESPN/SerpAPI statistics if used
+        if self.use_google_search and self.espn_scraper:
+            self.espn_scraper.print_stats()
         
         print(f"\n{'='*80}")
         print(f"BACKTEST COMPLETE")
@@ -1170,11 +1199,33 @@ class HistoricalBacktester:
             max_bankroll = max(self.bankroll_history)
             min_bankroll = min(self.bankroll_history)
             
-            # Add annotations for key stats
+            # Calculate max drawdown percentage
+            peak = self.initial_bankroll
+            max_drawdown_pct = 0
+            for br in self.bankroll_history:
+                if br > peak:
+                    peak = br
+                drawdown_pct = (peak - br) / peak * 100 if peak > 0 else 0
+                if drawdown_pct > max_drawdown_pct:
+                    max_drawdown_pct = drawdown_pct
+            
+            # Calculate bet statistics (only settled bets)
+            settled_bets = [b for b in self.bets_placed if b.get('result') is not None]
+            total_bets = len(settled_bets)
+            won_bets = sum(1 for b in settled_bets if b.get('result') == 'won')
+            win_rate = (won_bets / total_bets * 100) if total_bets > 0 else 0
+            
+            total_staked = sum(b['stake'] for b in settled_bets) if settled_bets else 0
+            total_profit = sum(b.get('actual_profit', 0) for b in settled_bets) if settled_bets else 0
+            roi = (total_profit / total_staked * 100) if total_staked > 0 else 0
+            
+            # Add annotations for key stats (multi-line title for readability)
             plt.title(f'Backtest Results: Bankroll Progression\n'
-                      f'Return: {total_return:+.2f}% | Final: £{final_bankroll:.2f} | '
-                      f'Peak: £{max_bankroll:.2f} | Low: £{min_bankroll:.2f}',
-                      fontsize=14, fontweight='bold', pad=20)
+                      f'Bets: {total_bets} | Win Rate: {win_rate:.1f}% | ROI: {roi:.2f}% | '
+                      f'Return: {total_return:+.2f}%\n'
+                      f'Max Drawdown: {max_drawdown_pct:.2f}% | Final: £{final_bankroll:.2f} | '
+                      f'Peak: £{max_bankroll:.2f}',
+                      fontsize=13, fontweight='bold', pad=20)
             
             # Formatting
             plt.xlabel('Date', fontsize=12, fontweight='bold')

@@ -266,20 +266,33 @@ class GoogleSearchScraper:
         if team1_score is None or team2_score is None:
             return None
         
-        # Match team names (fuzzy matching)
+        # Check if SerpAPI provides home/away indicators
+        team1_source = team1.get('source', '').lower()
+        team2_source = team2.get('source', '').lower()
+        
+        # Match team names using strict word-based matching
         team1_is_away = self._team_matches(team1_name, away_team)
         team1_is_home = self._team_matches(team1_name, home_team)
         team2_is_away = self._team_matches(team2_name, away_team)
         team2_is_home = self._team_matches(team2_name, home_team)
         
-        # Determine which team is which
-        if team1_is_away and team2_is_home:
+        # Determine which team is which - be strict to avoid swapped scores
+        if team1_is_away and team2_is_home and not team1_is_home and not team2_is_away:
+            # Clear match: team1=away, team2=home
             away_score, home_score = team1_score, team2_score
-        elif team1_is_home and team2_is_away:
+        elif team1_is_home and team2_is_away and not team1_is_away and not team2_is_home:
+            # Clear match: team1=home, team2=away
+            away_score, home_score = team2_score, team1_score
+        elif 'away' in team1_source and 'home' in team2_source:
+            # Use SerpAPI's source indicators as fallback
+            away_score, home_score = team1_score, team2_score
+        elif 'home' in team1_source and 'away' in team2_source:
+            # Use SerpAPI's source indicators as fallback
             away_score, home_score = team2_score, team1_score
         else:
-            # Can't match teams reliably, assume team1 is away
-            away_score, home_score = team1_score, team2_score
+            # Can't match teams reliably - return None instead of guessing
+            # This prevents swapped scores
+            return None
         
         # Determine winner
         if away_score > home_score:
@@ -323,7 +336,10 @@ class GoogleSearchScraper:
         return None
     
     def _team_matches(self, team_name1: str, team_name2: str) -> bool:
-        """Check if two team names match (case-insensitive, partial match)."""
+        """
+        Check if two team names match using strict word-based matching.
+        Uses same logic as ESPN matcher for consistency.
+        """
         if not team_name1 or not team_name2:
             return False
         
@@ -334,21 +350,31 @@ class GoogleSearchScraper:
         if name1 == name2:
             return True
         
-        # Partial match (one contains the other)
-        if name1 in name2 or name2 in name1:
-            return True
+        # Words to ignore when matching (same as ESPN)
+        ignore_words = {
+            'fc', 'sc', 'cf', 'ac', 'bk', 'the', 'afc', 'vs', '@', 'and',
+            'jk', 'de', 'el', 'la', 'united', 'city', 'f.c.', 's.c.', 'c.f.',
+            'a.c.', 'b.k.', 'a.f.c.', 'j.k.'
+        }
         
-        # Common abbreviations (e.g., "Man United" vs "Manchester United")
-        # Remove common words
-        common_words = {'fc', 'f.c.', 'united', 'city', 'the', 'a'}
-        words1 = set(name1.split()) - common_words
-        words2 = set(name2.split()) - common_words
+        # Extract significant words
+        words1 = [w for w in name1.split() if w not in ignore_words and len(w) > 1]
+        words2 = [w for w in name2.split() if w not in ignore_words and len(w) > 1]
         
-        # If any significant words match
-        if words1 & words2:
-            return True
+        if not words1 or not words2:
+            return False
         
-        return False
+        # ALL significant words from the shorter list must appear in the longer list
+        shorter_words = words1 if len(words1) <= len(words2) else words2
+        longer_words = words1 if len(words1) > len(words2) else words2
+        
+        matches = 0
+        for word in shorter_words:
+            if any(word in longer_word or longer_word in word for longer_word in longer_words):
+                matches += 1
+        
+        # Require all words to match
+        return matches == len(shorter_words)
     
     def _parse_score_from_organic_results(self, organic_results: List[Dict], away_team: str, home_team: str) -> Optional[Tuple[int, int, str]]:
         """
