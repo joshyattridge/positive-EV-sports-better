@@ -814,19 +814,44 @@ class PositiveEVScanner:
             betting_sports_str = os.getenv('BETTING_SPORTS', 'soccer_epl,soccer_england_championship,soccer_spain_la_liga,soccer_germany_bundesliga,soccer_italy_serie_a,soccer_france_ligue_one,soccer_uefa_champs_league,soccer_uefa_europa_league')
             sport_keys = [sport.strip() for sport in betting_sports_str.split(',')]
         
+        # First, filter to only sports with active events (FREE API call, doesn't count against quota)
+        print(f"🔍 Checking {len(sport_keys)} sports for active events...")
+        active_sports = []
+        
+        with ThreadPoolExecutor(max_workers=self.max_concurrent_requests) as executor:
+            future_to_sport = {
+                executor.submit(self.get_events, sport): sport 
+                for sport in sport_keys
+            }
+            
+            for future in as_completed(future_to_sport):
+                sport = future_to_sport[future]
+                try:
+                    events = future.result()
+                    if events:  # Only scan sports with active events
+                        active_sports.append(sport)
+                except Exception:
+                    pass  # Skip sports with errors
+        
+        print(f"✓ Found {len(active_sports)} sports with active events (skipping {len(sport_keys) - len(active_sports)} inactive sports)")
+        
+        if not active_sports:
+            print("⚠️  No active events found in any sport")
+            return {}
+        
         all_opportunities = {}
         
-        # Use ThreadPoolExecutor for concurrent scanning
-        print(f"🚀 Scanning {len(sport_keys)} sports with up to {self.max_concurrent_requests} concurrent requests...")
+        # Use ThreadPoolExecutor for concurrent scanning of active sports only
+        print(f"🚀 Scanning {len(active_sports)} active sports with up to {self.max_concurrent_requests} concurrent requests...")
         
         scanned_count = 0
         error_count = 0
         
         with ThreadPoolExecutor(max_workers=self.max_concurrent_requests) as executor:
-            # Submit all sports for concurrent processing
+            # Submit only active sports for concurrent processing
             future_to_sport = {
                 executor.submit(self.find_positive_ev_opportunities, sport, self.markets): sport 
-                for sport in sport_keys
+                for sport in active_sports
             }
             
             # Collect results as they complete
