@@ -492,60 +492,97 @@ class PositiveEVScanner:
             for market_type in markets_list:
                 # Get all outcomes for this market across all bookmakers
                 market_data = {}
-                # Track number of outcomes per bookmaker to separate 2-way from 3-way markets
-                bookmaker_outcome_counts = {}
+                # Track the exact set of outcome names per bookmaker to match markets properly
+                bookmaker_outcome_sets = {}
                 
                 for bookmaker in bookmakers:
                     # Get bookmaker-level link (least specific)
                     bookmaker_link = bookmaker.get('link')
                     
                     for market in bookmaker.get('markets', []):
-                        if market['key'] == market_type:
-                            # Get market link (more specific)
-                            market_link = market.get('link')
+                        # Handle API inconsistency: 3-way markets are returned as 'h2h' for soccer
+                        # So we need to check both the market key AND the outcome structure
+                        market_key_matches = False
+                        
+                        if market_type == 'h2h_3_way':
+                            # For h2h_3_way, accept markets with key 'h2h' (since API returns 3-way as h2h)
+                            market_key_matches = market['key'] == 'h2h'
+                        else:
+                            # For other market types, require exact key match
+                            market_key_matches = market['key'] == market_type
+                        
+                        if not market_key_matches:
+                            continue
+                        
+                        # Get market link (more specific)
+                        market_link = market.get('link')
+                        
+                        # Track the exact set of outcome names for this bookmaker's market
+                        outcome_names = []
+                        for outcome in market.get('outcomes', []):
+                            outcome_key = outcome['name']
+                            if 'point' in outcome:
+                                outcome_key += f" ({outcome['point']:+.1f})"
+                            outcome_names.append(outcome_key)
+                        
+                        # Store as frozen set for hashable comparison
+                        outcome_set = frozenset(outcome_names)
+                        
+                        # CRITICAL FIX: Skip markets that don't match expected structure
+                        # The Odds API returns 3-way markets (with Draw) labeled as 'h2h' for soccer
+                        # We need to filter by actual outcome pattern, not just market key
+                        num_outcomes = len(outcome_names)
+                        has_draw = any('Draw' in name for name in outcome_names)
+                        
+                        # For 'h2h' market type, only accept 2-outcome markets (no Draw)
+                        if market_type == 'h2h' and (num_outcomes != 2 or has_draw):
+                            continue
+                        
+                        # For 'h2h_3_way' market type, only accept 3-outcome markets with Draw
+                        if market_type == 'h2h_3_way' and (num_outcomes != 3 or not has_draw):
+                            continue
+                        
+                        bookmaker_outcome_sets[bookmaker['key']] = outcome_set
+                        
+                        for outcome in market.get('outcomes', []):
+                            outcome_key = outcome['name']
+                            if 'point' in outcome:
+                                outcome_key += f" ({outcome['point']:+.1f})"
                             
-                            # Track outcome count for this bookmaker's market
-                            outcome_count = len(market.get('outcomes', []))
-                            bookmaker_outcome_counts[bookmaker['key']] = outcome_count
+                            if outcome_key not in market_data:
+                                market_data[outcome_key] = []
                             
-                            for outcome in market.get('outcomes', []):
-                                outcome_key = outcome['name']
-                                if 'point' in outcome:
-                                    outcome_key += f" ({outcome['point']:+.1f})"
-                                
-                                if outcome_key not in market_data:
-                                    market_data[outcome_key] = []
-                                
-                                # Get outcome/betslip link (most specific) - prioritize this
-                                outcome_link = outcome.get('link')
-                                
-                                # Use most specific link available: outcome > market > bookmaker > game
-                                best_link = outcome_link or market_link or bookmaker_link or game.get('link')
-                                
-                                market_data[outcome_key].append({
-                                    'bookmaker': bookmaker['key'],
-                                    'title': bookmaker['title'],
-                                    'odds': outcome['price'],
-                                    'link': best_link,  # Use most specific link available
-                                    'outcome_count': outcome_count  # Track for filtering
-                                })
+                            # Get outcome/betslip link (most specific) - prioritize this
+                            outcome_link = outcome.get('link')
+                            
+                            # Use most specific link available: outcome > market > bookmaker > game
+                            best_link = outcome_link or market_link or bookmaker_link or game.get('link')
+                            
+                            market_data[outcome_key].append({
+                                'bookmaker': bookmaker['key'],
+                                'title': bookmaker['title'],
+                                'odds': outcome['price'],
+                                'link': best_link,  # Use most specific link available
+                                'outcome_set': outcome_set  # Store the full outcome set for this bookmaker
+                            })
                 
                 # Analyze each outcome
                 for outcome_name, odds_list in market_data.items():
-                    # Determine the most common outcome count for this market
-                    # This ensures we compare 2-way with 2-way and 3-way with 3-way
-                    outcome_counts = [o.get('outcome_count', 0) for o in odds_list]
-                    if not outcome_counts:
+                    # Group bookmakers by their exact outcome set (not just count)
+                    # This ensures we only compare bookmakers offering the same set of outcomes
+                    outcome_sets = [o.get('outcome_set') for o in odds_list if o.get('outcome_set')]
+                    if not outcome_sets:
                         continue
                     
-                    # Use the most common outcome count (2-way or 3-way)
+                    # Use the most common outcome set
                     from collections import Counter
-                    most_common_count = Counter(outcome_counts).most_common(1)[0][0]
+                    most_common_set = Counter(outcome_sets).most_common(1)[0][0]
                     
-                    # Filter to only include bookmakers with matching outcome count
-                    filtered_odds_list = [o for o in odds_list if o.get('outcome_count', 0) == most_common_count]
+                    # Filter to only include bookmakers with the exact matching outcome set
+                    # This prevents mixing 2-way and 3-way markets, or markets with different outcomes
+                    filtered_odds_list = [o for o in odds_list if o.get('outcome_set') == most_common_set]
                     
-                    # Get sharp book average as baseline (only from matching outcome count)
+                    # Get sharp book average as baseline (only from matching outcome set)
                     sharp_odds = [o['odds'] for o in filtered_odds_list if o['bookmaker'] in self.sharp_books]
                     
                     if not sharp_odds:
@@ -561,10 +598,10 @@ class PositiveEVScanner:
                         # Build complete market odds for each sharp bookmaker
                         sharp_market_odds_complete = {}  # {bookmaker: {outcome_name: odds}}
                         
-                        # First pass: collect ALL outcomes for each sharp bookmaker
+                        # First pass: collect ALL outcomes for each sharp bookmaker (matching outcome set only)
                         for other_outcome_name, other_odds_list in market_data.items():
                             for odds_data in other_odds_list:
-                                if odds_data['bookmaker'] in self.sharp_books and odds_data.get('outcome_count', 0) == most_common_count:
+                                if odds_data['bookmaker'] in self.sharp_books and odds_data.get('outcome_set') == most_common_set:
                                     bookmaker_key = odds_data['bookmaker']
                                     if bookmaker_key not in sharp_market_odds_complete:
                                         sharp_market_odds_complete[bookmaker_key] = {}
