@@ -61,3 +61,4 @@ Thumbs.db
 data/.odds_cache.pkl
 data/serpapi_cache
 data/espn_cache
+data/settlement_failures.json
