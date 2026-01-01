@@ -346,8 +346,8 @@ class TestTwoWayVsThreeWayMarketHandling:
                     'markets': [{
                         'key': 'h2h',
                         'outcomes': [
-                            {'name': 'Arsenal', 'price': 2.0},
-                            {'name': 'Chelsea', 'price': 2.0}
+                            {'name': 'Arsenal', 'price': 2.05},
+                            {'name': 'Chelsea', 'price': 1.95}
                         ]
                     }]
                 },
@@ -587,8 +587,8 @@ class TestSpreadAndTotalsMarkets:
                     'markets': [{
                         'key': 'spreads',
                         'outcomes': [
-                            {'name': 'Team A', 'price': 1.95, 'point': -3.5},
-                            {'name': 'Team B', 'price': 1.95, 'point': 3.5}
+                            {'name': 'Team A', 'price': 1.91, 'point': -3.5},
+                            {'name': 'Team B', 'price': 1.99, 'point': 3.5}
                         ]
                     }]
                 },
@@ -975,8 +975,8 @@ class TestExpectedProfitCalculation:
                     'markets': [{
                         'key': 'h2h',
                         'outcomes': [
-                            {'name': 'Team O', 'price': 2.00},  # 50% true probability
-                            {'name': 'Team P', 'price': 2.00}
+                            {'name': 'Team O', 'price': 2.05},  # ~49% true probability
+                            {'name': 'Team P', 'price': 1.95}   # ~51% true probability
                         ]
                     }]
                 },
@@ -1038,8 +1038,8 @@ class TestMultipleMarketsInSameGame:
                         {
                             'key': 'h2h',
                             'outcomes': [
-                                {'name': 'Team Q', 'price': 2.00},
-                                {'name': 'Team R', 'price': 2.00}
+                                {'name': 'Team Q', 'price': 2.05},
+                                {'name': 'Team R', 'price': 1.95}
                             ]
                         },
                         {

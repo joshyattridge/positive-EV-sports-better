@@ -588,6 +588,53 @@ class PositiveEVScanner:
                     if not sharp_odds:
                         self._filter_stats['no_sharp_odds'] += 1
                         continue
+                    
+                    # DATA VALIDATION: Skip if sharp bookmaker has identical odds across different outcomes
+                    # This indicates corrupted/duplicate data (e.g., Pinnacle showing Draw odds = favorite odds)
+                    for bookmaker_key in self.sharp_books:
+                        # Collect all odds for this sharp bookmaker across all outcomes in this market
+                        bookmaker_odds_in_market = {}
+                        for other_outcome, other_odds_list in market_data.items():
+                            for odds_entry in other_odds_list:
+                                if (odds_entry['bookmaker'] == bookmaker_key and 
+                                    odds_entry.get('outcome_set') == most_common_set):
+                                    bookmaker_odds_in_market[other_outcome] = odds_entry['odds']
+                        
+                        # If this bookmaker has multiple outcomes with the same odds, it's corrupted data
+                        if len(bookmaker_odds_in_market) > 1:
+                            odds_values = list(bookmaker_odds_in_market.values())
+                            unique_odds = set(odds_values)
+                            
+                            # Check if there are duplicate odds values
+                            if len(unique_odds) < len(odds_values):
+                                # Find which odds values are duplicated
+                                from collections import Counter
+                                odds_counter = Counter(odds_values)
+                                duplicate_odds = [odds for odds, count in odds_counter.items() if count > 1]
+                                
+                                # Get outcome names with duplicate odds
+                                duplicate_outcomes = []
+                                for dup_odds in duplicate_odds:
+                                    dup_names = [name for name, odds in bookmaker_odds_in_market.items() if odds == dup_odds]
+                                    duplicate_outcomes.append(f"{'/'.join(dup_names)} @ {dup_odds}")
+                                
+                                # Remove all data for this corrupted sharp bookmaker from this market
+                                for outcome_to_clean in list(market_data.keys()):
+                                    market_data[outcome_to_clean] = [
+                                        odds for odds in market_data[outcome_to_clean]
+                                        if odds['bookmaker'] != bookmaker_key
+                                    ]
+                                
+                                # Recalculate sharp odds after removing corrupted bookmaker
+                                sharp_odds = [o['odds'] for o in filtered_odds_list 
+                                            if o['bookmaker'] in self.sharp_books and o['bookmaker'] != bookmaker_key]
+                                
+                                # If no sharp odds left after removing corrupted data, skip this outcome
+                                if not sharp_odds:
+                                    self._filter_stats['no_sharp_odds'] += 1
+                                    break
+                    
+                    # Final check after corruption filtering
                     if not sharp_odds:
                         continue
                     
