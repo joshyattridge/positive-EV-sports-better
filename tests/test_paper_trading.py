@@ -208,17 +208,21 @@ class TestManageBetsPaperTradeMode:
     def test_auto_settle_bets_paper_trade(self):
         """Test auto_settle_bets with paper_trade flag"""
         with patch('scripts.manage_bets.BetLogger') as mock_logger_class, \
-             patch('scripts.manage_bets.ScoreFetcher') as mock_fetcher_class:
+             patch('scripts.manage_bets.GoogleSearchScraper') as mock_google_class, \
+             patch('scripts.manage_bets.ESPNScoresFetcher') as mock_espn_class:
             mock_logger = Mock()
             mock_path = Mock(spec=Path)
             mock_path.exists.return_value = False
             mock_logger.log_path = mock_path
             mock_logger_class.return_value = mock_logger
             
-            mock_fetcher = Mock()
-            mock_fetcher_class.return_value = mock_fetcher
+            mock_google = Mock()
+            mock_google_class.return_value = mock_google
             
-            auto_settle_bets(days_from=3, dry_run=False, paper_trade=True)
+            mock_espn = Mock()
+            mock_espn_class.return_value = mock_espn
+            
+            auto_settle_bets(dry_run=False, paper_trade=True)
             
             # Should initialize BetLogger with paper trade path
             mock_logger_class.assert_called_once_with(log_path="data/paper_trade_history.csv")

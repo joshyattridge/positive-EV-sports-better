@@ -233,71 +233,80 @@ class TestDetermineBetResult:
     
     def test_determine_bet_result_h2h_home_win(self, backtester):
         """Test h2h bet result for home win"""
+        from unittest.mock import MagicMock
+        from src.utils.bet_settler import BetSettler
+        
         bet = {
             'game': 'Chelsea @ Arsenal',
             'market': 'h2h',
-            'outcome': 'Arsenal'
+            'outcome': 'Arsenal',
+            'sport': 'soccer_epl',
+            'commence_time': '2024-01-01T15:00:00Z'
         }
         
-        scores_data = {
-            'Chelsea @ Arsenal': {
-                'completed': True,
-                'home_team': 'Arsenal',
-                'away_team': 'Chelsea',
-                'scores': [
-                    {'name': 'Arsenal', 'score': '2'},
-                    {'name': 'Chelsea', 'score': '1'}
-                ]
-            }
+        # Mock ESPN result
+        backtester.espn_scraper = MagicMock()
+        backtester.espn_scraper.get_game_result.return_value = {
+            'home_team': 'Arsenal',
+            'away_team': 'Chelsea',
+            'home_score': 2,
+            'away_score': 1,
+            'source': 'espn'
         }
         
-        result = backtester.determine_bet_result(bet, scores_data)
+        result = backtester.determine_bet_result(bet, {})
         assert result == 'won'
     
     def test_determine_bet_result_h2h_away_win(self, backtester):
         """Test h2h bet result for away win"""
+        from unittest.mock import MagicMock
+        from src.utils.bet_settler import BetSettler
+        
         bet = {
             'game': 'Chelsea @ Arsenal',
             'market': 'h2h',
-            'outcome': 'Chelsea'
+            'outcome': 'Chelsea',
+            'sport': 'soccer_epl',
+            'commence_time': '2024-01-01T15:00:00Z'
         }
         
-        scores_data = {
-            'Chelsea @ Arsenal': {
-                'completed': True,
-                'home_team': 'Arsenal',
-                'away_team': 'Chelsea',
-                'scores': [
-                    {'name': 'Arsenal', 'score': '1'},
-                    {'name': 'Chelsea', 'score': '2'}
-                ]
-            }
+        # Mock ESPN result
+        backtester.espn_scraper = MagicMock()
+        backtester.espn_scraper.get_game_result.return_value = {
+            'home_team': 'Arsenal',
+            'away_team': 'Chelsea',
+            'home_score': 1,
+            'away_score': 2,
+            'source': 'espn'
         }
         
-        result = backtester.determine_bet_result(bet, scores_data)
+        result = backtester.determine_bet_result(bet, {})
         assert result == 'won'
     
     def test_determine_bet_result_h2h_loss(self, backtester):
         """Test h2h bet result for loss"""
+        from unittest.mock import MagicMock
+        from src.utils.bet_settler import BetSettler
+        
         bet = {
             'game': 'Chelsea @ Arsenal',
             'market': 'h2h',
-            'outcome': 'Chelsea'
+            'outcome': 'Chelsea',
+            'sport': 'soccer_epl',
+            'commence_time': '2024-01-01T15:00:00Z'
         }
         
-        scores_data = {
-            'Chelsea @ Arsenal': {
-                'completed': True,
-                'home_team': 'Arsenal',
-                'away_team': 'Chelsea',
-                'scores': [
-                    {'name': 'Arsenal', 'score': '2'},
-                    {'name': 'Chelsea', 'score': '1'}
-                ]
-            }
+        # Mock ESPN result
+        backtester.espn_scraper = MagicMock()
+        backtester.espn_scraper.get_game_result.return_value = {
+            'home_team': 'Arsenal',
+            'away_team': 'Chelsea',
+            'home_score': 2,
+            'away_score': 1,
+            'source': 'espn'
         }
         
-        result = backtester.determine_bet_result(bet, scores_data)
+        result = backtester.determine_bet_result(bet, {})
         assert result == 'lost'
     
     def test_determine_bet_result_game_not_found(self, backtester):

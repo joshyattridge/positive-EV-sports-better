@@ -20,6 +20,7 @@ from src.core.positive_ev_scanner import PositiveEVScanner
 from src.utils.odds_utils import calculate_implied_probability, calculate_ev
 from src.utils.google_search_scraper import GoogleSearchScraper
 from src.utils.espn_scores import ESPNScoresFetcher
+from src.utils.bet_settler import BetSettler
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from tqdm import tqdm
@@ -34,12 +35,8 @@ class HistoricalBacktester:
     Backtest betting strategy using historical odds data.
     """
     
-    def __init__(self, use_google_search: bool = False):
-        """Initialize backtester with scanner.
-        
-        Args:
-            use_google_search: If True, use SerpAPI to fetch real game results from Google Sports
-        """
+    def __init__(self):
+        """Initialize backtester with scanner."""
         self.api_key = os.getenv('ODDS_API_KEY')
         if not self.api_key:
             raise ValueError("ODDS_API_KEY must be set in .env file")
@@ -53,21 +50,19 @@ class HistoricalBacktester:
         # Initialize scanner (reads all parameters from .env)
         self.scanner = PositiveEVScanner(api_key=self.api_key)
         
-        # Initialize ESPN + SerpAPI for real results if enabled
-        self.use_google_search = use_google_search
+        # Initialize ESPN + SerpAPI for real results (always enabled)
         self.google_scraper = None
         self.espn_scraper = None
-        if use_google_search:
-            try:
-                # Initialize SerpAPI for fallback
-                self.google_scraper = GoogleSearchScraper()
-                # Initialize ESPN with SerpAPI fallback
-                self.espn_scraper = ESPNScoresFetcher(serpapi_fallback=self.google_scraper)
-                print(f"✅ ESPN API enabled for real game results (with SerpAPI fallback)")
-            except ValueError as e:
-                print(f"⚠️  ESPN/SerpAPI not configured: {e}")
-                print(f"   Falling back to simulated results")
-                self.use_google_search = False
+        try:
+            # Initialize SerpAPI for fallback
+            self.google_scraper = GoogleSearchScraper()
+            # Initialize ESPN with SerpAPI fallback
+            self.espn_scraper = ESPNScoresFetcher(serpapi_fallback=self.google_scraper)
+            print(f"✅ ESPN API enabled for real game results (with SerpAPI fallback)")
+        except ValueError as e:
+            print(f"⚠️  ESPN/SerpAPI not configured: {e}")
+            print(f"   Settlement will not be available")
+            raise
         
         # Store initial bankroll for resets
         self.initial_bankroll = self.scanner.kelly.bankroll
@@ -755,8 +750,8 @@ class HistoricalBacktester:
                 # If we can't parse the time, be conservative and return None
                 return None
         
-        # Try ESPN API first (with SerpAPI fallback) if enabled
-        if self.use_google_search and self.espn_scraper:
+        # Use ESPN API with SerpAPI fallback
+        if self.espn_scraper:
             try:
                 # Parse team names from the game string (e.g., "Buffalo Bills @ New England Patriots")
                 game_str = bet.get('game', '')
@@ -795,116 +790,23 @@ class HistoricalBacktester:
                             
                             print(f"   ✓ Settled via {source.upper()}: {espn_away} {away_score} @ {espn_home} {home_score}")
                             
-                            # Determine winner based on market type
-                            if bet['market'] in ['h2h', 'h2h_3_way']:
-                                outcome = bet['outcome']
-                                
-                                # Match outcome to actual teams (case-insensitive partial match)
-                                outcome_lower = outcome.lower()
-                                home_lower = home_team.lower()
-                                away_lower = away_team.lower()
-                                espn_home_lower = espn_home.lower()
-                                espn_away_lower = espn_away.lower()
-                                
-                                # Determine if bet was on home or away team
-                                bet_on_home = (outcome_lower in home_lower or home_lower in outcome_lower or 
-                                              outcome_lower in espn_home_lower or espn_home_lower in outcome_lower)
-                                bet_on_away = (outcome_lower in away_lower or away_lower in outcome_lower or
-                                              outcome_lower in espn_away_lower or espn_away_lower in outcome_lower)
-                                
-                                # Check if bet won
-                                if bet_on_home and home_score > away_score:
-                                    return 'won'
-                                elif bet_on_away and away_score > home_score:
-                                    return 'won'
-                                elif 'draw' in outcome_lower and home_score == away_score:
-                                    return 'won'
-                                else:
-                                    return 'lost'
+                            # Use unified BetSettler to determine result
+                            result = BetSettler.determine_bet_result_backtest(
+                                bet=bet,
+                                home_team=home_team,
+                                away_team=away_team,
+                                home_score=home_score,
+                                away_score=away_score,
+                                espn_home=espn_home,
+                                espn_away=espn_away
+                            )
                             
-                            elif bet['market'] == 'totals':
-                                # Parse the line (e.g., "Over 2.5" or "Under 48.5")
-                                outcome = bet['outcome']
-                                total_score = home_score + away_score
-                                
-                                if 'Over' in outcome:
-                                    # Extract the line value
-                                    try:
-                                        line = float(outcome.split()[-1])
-                                        return 'won' if total_score > line else 'lost'
-                                    except (ValueError, IndexError):
-                                        return None
-                                elif 'Under' in outcome:
-                                    try:
-                                        line = float(outcome.split()[-1])
-                                        return 'won' if total_score < line else 'lost'
-                                    except (ValueError, IndexError):
-                                        return None
+                            if result:
+                                return result
                 
             except Exception as e:
-                # If ESPN/SerpAPI fails, fall back to scores_data
+                # If ESPN/SerpAPI fails, return None
                 pass
-        
-        # Fallback: Look up game in pre-indexed scores data
-        bet_game = f"{bet.get('game', '')}"
-        game = scores_data.get(bet_game)
-        
-        if game:
-            # Check if game is completed
-            if not game.get('completed', False):
-                return None
-            
-            scores = game.get('scores')
-            if not scores or len(scores) < 2:
-                return None
-            
-            # Parse scores
-            home_score = None
-            away_score = None
-            
-            for score in scores:
-                if score['name'] == game['home_team']:
-                    home_score = int(score['score'])
-                elif score['name'] == game['away_team']:
-                    away_score = int(score['score'])
-            
-            if home_score is None or away_score is None:
-                return None
-            
-            # Determine winner based on market type
-            if bet['market'] in ['h2h', 'h2h_3_way']:
-                outcome = bet['outcome']
-                
-                if outcome == game['home_team'] and home_score > away_score:
-                    return 'won'
-                elif outcome == game['away_team'] and away_score > home_score:
-                    return 'won'
-                elif 'Draw' in outcome and home_score == away_score:
-                    return 'won'
-                else:
-                    return 'lost'
-            
-            elif bet['market'] == 'totals':
-                # Parse the line (e.g., "Over 2.5" or "Under 48.5")
-                outcome = bet['outcome']
-                total_score = home_score + away_score
-                
-                if 'Over' in outcome:
-                    try:
-                        line = float(outcome.split()[-1])
-                        return 'won' if total_score > line else 'lost'
-                    except (ValueError, IndexError):
-                        return None
-                elif 'Under' in outcome:
-                    try:
-                        line = float(outcome.split()[-1])
-                        return 'won' if total_score < line else 'lost'
-                    except (ValueError, IndexError):
-                        return None
-            
-            # For spreads, would need more complex logic
-            # For now, return None for these markets
-            return None
         
         return None
     
@@ -995,8 +897,8 @@ class HistoricalBacktester:
         total_opportunities = 0
         
         # Determine result source
-        if self.use_google_search and self.google_scraper:
-            print("\n📋 Using Google Search API for real game results\n")
+        if self.espn_scraper:
+            print("\n📋 Using ESPN API (with SerpAPI fallback) for real game results\n")
         else:
             print("\n📋 Using simulated results based on true win probabilities\n")
         scores_data = {}
@@ -1096,7 +998,7 @@ class HistoricalBacktester:
             print(f"Fetching real results for {len(pending_bets)} pending bets...\n")
             
             # Pre-fetch all unique game results in parallel to speed up settlement
-            if self.use_google_search and self.espn_scraper:
+            if self.espn_scraper:
                 print("⚡ Pre-fetching game results in parallel...")
                 self._prefetch_game_results(pending_bets, end)
                 print(f"✅ Pre-fetch complete. Now settling bets...\n")
@@ -1179,7 +1081,7 @@ class HistoricalBacktester:
             print()
         
         # Print ESPN/SerpAPI statistics if used
-        if self.use_google_search and self.espn_scraper:
+        if self.espn_scraper:
             self.espn_scraper.print_stats()
         
         print(f"\n{'='*80}")
@@ -1614,12 +1516,6 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
         help='Output filename (default: backtest_results.json)'
     )
     
-    parser.add_argument(
-        '--google-search',
-        action='store_true',
-        help='Use SerpAPI to fetch real game results from Google Sports (requires SERPAPI_KEY in .env, 100 free/month)'
-    )
-    
     args = parser.parse_args()
     
     # Determine sports to backtest
@@ -1664,10 +1560,7 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
         return
     
     # Run backtest with all sports together
-    backtester = HistoricalBacktester(use_google_search=args.google_search)
-    
-    # Run backtest with all sports together
-    backtester = HistoricalBacktester(use_google_search=args.google_search)
+    backtester = HistoricalBacktester()
     
     # Run single backtest with Google results
     results = backtester.backtest(

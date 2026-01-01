@@ -20,7 +20,7 @@ class TestPendingBetBankrollHandling:
         os.environ['MIN_EDGE_PERCENTAGE'] = '2.0'
         os.environ['KELLY_FRACTION'] = '0.5'
         
-        backtester = HistoricalBacktester(use_google_search=False)
+        backtester = HistoricalBacktester()
         backtester.current_bankroll = 1000.0
         backtester.initial_bankroll = 1000.0
         return backtester
@@ -207,7 +207,7 @@ class TestBankrollNeverNegativeFromPending:
         os.environ['MIN_EDGE_PERCENTAGE'] = '2.0'
         os.environ['KELLY_FRACTION'] = '0.5'
         
-        backtester = HistoricalBacktester(use_google_search=False)
+        backtester = HistoricalBacktester()
         backtester.current_bankroll = 1000.0
         backtester.initial_bankroll = 1000.0
         return backtester
