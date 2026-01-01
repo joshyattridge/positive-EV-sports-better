@@ -655,6 +655,7 @@ class HistoricalBacktester:
         
         # Fetch results sequentially to avoid rate limiting
         results_cache = {}
+        failed_fetches = []
         
         # Progress bar for fetching
         from tqdm import tqdm
@@ -669,14 +670,48 @@ class HistoricalBacktester:
                 
                 if result:
                     results_cache[game_key] = result
+                else:
+                    # Log when result lookup returns None
+                    failed_fetches.append({
+                        'game': f"{game_info['away_team']} @ {game_info['home_team']}",
+                        'sport': game_info['sport'],
+                        'date': str(game_info['game_date'].date()),
+                        'reason': 'No result returned'
+                    })
                     
             except Exception as e:
-                # Silently fail for individual games
-                pass
+                # Log exceptions during fetching
+                failed_fetches.append({
+                    'game': f"{game_info['away_team']} @ {game_info['home_team']}",
+                    'sport': game_info['sport'],
+                    'date': str(game_info['game_date'].date()),
+                    'reason': f'{type(e).__name__}: {str(e)}'
+                })
         
         # Store in memory cache
         self.memory_cache.update(results_cache)
-        print(f"   ✅ Cached {len(results_cache)} game results in memory\n")
+        print(f"   ✅ Cached {len(results_cache)} game results in memory")
+        
+        if failed_fetches:
+            print(f"   ⚠️  Failed to fetch {len(failed_fetches)} games")
+            
+            # Show sample of failures by sport
+            from collections import Counter
+            sport_failures = Counter(f['sport'] for f in failed_fetches)
+            print(f"\n   Top sports with fetch failures:")
+            for sport, count in sport_failures.most_common(10):
+                print(f"      {sport}: {count} games")
+            
+            # Save detailed failure log
+            failure_log_path = Path('data/fetch_failures.json')
+            try:
+                with open(failure_log_path, 'w') as f:
+                    json.dump(failed_fetches, f, indent=2)
+                print(f"\n   📝 Detailed failure log saved to: {failure_log_path}")
+            except Exception as e:
+                print(f"   ⚠️  Could not save failure log: {e}")
+        
+        print()
     
     def determine_bet_result(self, bet: Dict, scores_data: Dict, current_time: Optional[datetime] = None) -> Optional[str]:
         """
@@ -761,7 +796,7 @@ class HistoricalBacktester:
                             print(f"   ✓ Settled via {source.upper()}: {espn_away} {away_score} @ {espn_home} {home_score}")
                             
                             # Determine winner based on market type
-                            if bet['market'] == 'h2h':
+                            if bet['market'] in ['h2h', 'h2h_3_way']:
                                 outcome = bet['outcome']
                                 
                                 # Match outcome to actual teams (case-insensitive partial match)
@@ -786,6 +821,25 @@ class HistoricalBacktester:
                                     return 'won'
                                 else:
                                     return 'lost'
+                            
+                            elif bet['market'] == 'totals':
+                                # Parse the line (e.g., "Over 2.5" or "Under 48.5")
+                                outcome = bet['outcome']
+                                total_score = home_score + away_score
+                                
+                                if 'Over' in outcome:
+                                    # Extract the line value
+                                    try:
+                                        line = float(outcome.split()[-1])
+                                        return 'won' if total_score > line else 'lost'
+                                    except (ValueError, IndexError):
+                                        return None
+                                elif 'Under' in outcome:
+                                    try:
+                                        line = float(outcome.split()[-1])
+                                        return 'won' if total_score < line else 'lost'
+                                    except (ValueError, IndexError):
+                                        return None
                 
             except Exception as e:
                 # If ESPN/SerpAPI fails, fall back to scores_data
@@ -818,7 +872,7 @@ class HistoricalBacktester:
                 return None
             
             # Determine winner based on market type
-            if bet['market'] == 'h2h':
+            if bet['market'] in ['h2h', 'h2h_3_way']:
                 outcome = bet['outcome']
                 
                 if outcome == game['home_team'] and home_score > away_score:
@@ -830,7 +884,25 @@ class HistoricalBacktester:
                 else:
                     return 'lost'
             
-            # For spreads and totals, would need more complex logic
+            elif bet['market'] == 'totals':
+                # Parse the line (e.g., "Over 2.5" or "Under 48.5")
+                outcome = bet['outcome']
+                total_score = home_score + away_score
+                
+                if 'Over' in outcome:
+                    try:
+                        line = float(outcome.split()[-1])
+                        return 'won' if total_score > line else 'lost'
+                    except (ValueError, IndexError):
+                        return None
+                elif 'Under' in outcome:
+                    try:
+                        line = float(outcome.split()[-1])
+                        return 'won' if total_score < line else 'lost'
+                    except (ValueError, IndexError):
+                        return None
+            
+            # For spreads, would need more complex logic
             # For now, return None for these markets
             return None
         
@@ -1031,6 +1103,7 @@ class HistoricalBacktester:
             
             settled_count = 0
             failed_count = 0
+            settlement_failures = []
             
             # Create progress bar for settling bets
             settle_pbar = tqdm(pending_bets, desc="Settling bets", unit="bet", ncols=120,
@@ -1063,6 +1136,14 @@ class HistoricalBacktester:
                     settled_count += 1
                 else:
                     failed_count += 1
+                    # Track which bets failed to settle
+                    settlement_failures.append({
+                        'game': bet.get('game'),
+                        'sport': bet.get('sport'),
+                        'commence_time': bet.get('commence_time'),
+                        'market': bet.get('market'),
+                        'outcome': bet.get('outcome')
+                    })
                 
                 # Update progress bar with current stats
                 settle_pbar.set_postfix({'settled': settled_count, 'failed': failed_count})
@@ -1072,6 +1153,29 @@ class HistoricalBacktester:
             print(f"\n✅ Settled {settled_count} bets with real Google results")
             if failed_count > 0:
                 print(f"❌ Failed to get results for {failed_count} bets (will be excluded from analysis)")
+                
+                # Analyze settlement failures
+                from collections import Counter
+                failed_sports = Counter(f['sport'] for f in settlement_failures)
+                failed_markets = Counter(f['market'] for f in settlement_failures)
+                
+                print(f"\n   Top sports with settlement failures:")
+                for sport, count in failed_sports.most_common(10):
+                    print(f"      {sport}: {count} bets")
+                
+                print(f"\n   Settlement failures by market:")
+                for market, count in failed_markets.most_common():
+                    print(f"      {market}: {count} bets")
+                
+                # Save settlement failure log
+                settlement_log_path = Path('data/settlement_failures.json')
+                try:
+                    with open(settlement_log_path, 'w') as f:
+                        json.dump(settlement_failures, f, indent=2)
+                    print(f"\n   📝 Settlement failure log saved to: {settlement_log_path}")
+                except Exception as e:
+                    print(f"   ⚠️  Could not save settlement log: {e}")
+            
             print()
         
         # Print ESPN/SerpAPI statistics if used
