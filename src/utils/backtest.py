@@ -21,6 +21,7 @@ from src.utils.odds_utils import calculate_implied_probability, calculate_ev
 from src.utils.google_search_scraper import GoogleSearchScraper
 from src.utils.espn_scores import ESPNScoresFetcher
 from src.utils.bet_settler import BetSettler
+from src.utils.bet_logger import BetLogger
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from tqdm import tqdm
@@ -67,6 +68,9 @@ class HistoricalBacktester:
         # Store initial bankroll for resets
         self.initial_bankroll = self.scanner.kelly.bankroll
         
+        # Initialize bet logger for CSV recording
+        self.bet_logger = BetLogger(log_path="data/backtest_bet_history.csv")
+        
         # Track results
         self.bets_placed = []
         self.bankroll_history = [self.initial_bankroll]
@@ -81,7 +85,7 @@ class HistoricalBacktester:
         self.memory_cache = {}  # Will be populated by preload_cache()
         
     def reset_state(self):
-        """Reset backtester state for new Monte Carlo run."""
+        """Reset backtester state for new run."""
         self.bets_placed = []
         self.bankroll_history = [self.initial_bankroll]
         self.bankroll_timestamps = []
@@ -89,6 +93,7 @@ class HistoricalBacktester:
         self.games_bet_on = set()
         # Reset scanner's Kelly bankroll
         self.scanner.kelly.bankroll = self.initial_bankroll
+        # Note: Do NOT reinitialize bet_logger here as it would clear the CSV file
     
     def _parse_timestamp(self, ts: str):
         """Parse timestamp string in various formats, always returning timezone-aware datetime."""
@@ -580,11 +585,13 @@ class HistoricalBacktester:
         
         # Convert scanner's output format to backtest format
         # Scanner returns ev_percentage (0-100), backtest expects ev (0-1)
-        # Scanner returns kelly_stake dict, backtest expects flat fields
+        # Keep kelly_stake dict intact for BetLogger, but also add flat fields for backtest
         for opp in opportunities:
             if 'ev_percentage' in opp:
                 opp['ev'] = opp['ev_percentage'] / 100
             if 'kelly_stake' in opp:
+                # Keep kelly_stake dict for BetLogger
+                # Also add flat fields for backward compatibility
                 opp['kelly_pct'] = opp['kelly_stake']['kelly_percentage'] / 100
                 opp['stake'] = opp['kelly_stake']['recommended_stake']
             if 'true_probability' in opp and opp['true_probability'] >= 1:
@@ -815,12 +822,28 @@ class HistoricalBacktester:
         Simulate placing a bet and update bankroll only when bet settles.
         
         Args:
-            bet: Bet details
+            bet: Bet details (opportunity dictionary from scanner)
             result: 'won', 'lost', or None (pending)
             bet_timestamp: When the bet was placed (for charting)
         """
         stake = bet['stake']
         commence_time = bet.get('commence_time')
+        
+        # Log bet to CSV immediately when placing (as pending)
+        # Store the timestamp for later updates
+        bet_placed_timestamp = bet.get('bet_placed_at', bet_timestamp)
+        if bet_placed_timestamp:
+            # Convert to proper timestamp format if needed
+            if isinstance(bet_placed_timestamp, str):
+                # If it's already in the right format, use it
+                csv_timestamp = bet_placed_timestamp
+            else:
+                csv_timestamp = bet_placed_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            csv_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Store the timestamp in the bet for later updates
+        bet['csv_timestamp'] = csv_timestamp
         
         # Only update bankroll for settled bets
         if result == 'won':
@@ -849,7 +872,24 @@ class HistoricalBacktester:
         bet['actual_profit'] = actual_profit
         bet['bankroll_after'] = self.current_bankroll if result is not None else None
         
+        # Add to in-memory tracking
         self.bets_placed.append(bet)
+        
+        # Log to CSV via BetLogger with the backtest timestamp
+        # If this is first time placing (result is None), log as pending
+        if result is None:
+            self.bet_logger.log_bet(bet, bet_placed=True, notes="Backtest", timestamp=csv_timestamp)
+        else:
+            # If bet is already settled when placing (shouldn't happen normally), 
+            # log and immediately update
+            self.bet_logger.log_bet(bet, bet_placed=True, notes="Backtest", timestamp=csv_timestamp)
+            bet_result_status = 'win' if result == 'won' else 'loss' if result == 'lost' else 'void'
+            self.bet_logger.update_bet_result(
+                timestamp=csv_timestamp,
+                result=bet_result_status,
+                actual_profit_loss=actual_profit,
+                notes=f"Settled: {result}"
+            )
     
     def backtest(self, sports: List[str], start_date: str, end_date: str, 
                  snapshot_interval_hours: int = 12) -> Dict:
@@ -1035,6 +1075,17 @@ class HistoricalBacktester:
                         self.bankroll_timestamps.append(bet_time)
                         self.bankroll_history.append(self.current_bankroll)
                     
+                    # Update CSV with result
+                    csv_timestamp = bet.get('csv_timestamp')
+                    if csv_timestamp:
+                        bet_result_status = 'win' if result == 'won' else 'loss' if result == 'lost' else 'void'
+                        self.bet_logger.update_bet_result(
+                            timestamp=csv_timestamp,
+                            result=bet_result_status,
+                            actual_profit_loss=bet['actual_profit'],
+                            notes=f"Settled via Google/ESPN"
+                        )
+                    
                     settled_count += 1
                 else:
                     failed_count += 1
@@ -1173,8 +1224,8 @@ class HistoricalBacktester:
         print(f"\nRisk Metrics:")
         print(f"  Max Drawdown: £{max_drawdown:.2f} ({max_drawdown_pct:.2f}%)")
         
-        # Export bets to CSV
-        self.export_bets_to_csv()
+        # CSV export is now handled automatically by BetLogger during place_bet and settlement
+        print(f"💾 Bets logged to data/backtest_bet_history.csv")
         
         # Show per-sport breakdown if multiple sports
         sports_in_bets = set(b.get('sport') for b in settled_bets if b.get('sport'))
@@ -1369,81 +1420,6 @@ class HistoricalBacktester:
             print(f"   ❌ Error generating chart: {e}")
             import traceback
             traceback.print_exc()
-    
-    def export_bets_to_csv(self, filename: str = 'data/backtest_bet_history.csv'):
-        """
-        Export all placed bets to a CSV file.
-        
-        Args:
-            filename: Path to save the CSV file
-        """
-        if not self.bets_placed:
-            print("⚠️  No bets to export")
-            return
-        
-        # Ensure directory exists
-        Path(filename).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Define CSV headers (similar to BetLogger)
-        headers = [
-            'timestamp',
-            'date_placed',
-            'game_id',
-            'sport',
-            'game',
-            'commence_time',
-            'market',
-            'outcome',
-            'bookmaker',
-            'bookmaker_key',
-            'bet_odds',
-            'sharp_avg_odds',
-            'true_probability_pct',
-            'ev_percentage',
-            'bankroll',
-            'kelly_percentage',
-            'recommended_stake',
-            'expected_profit',
-            'bet_result',
-            'actual_profit_loss',
-            'bankroll_after'
-        ]
-        
-        try:
-            with open(filename, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
-                writer.writeheader()
-                
-                for bet in self.bets_placed:
-                    row = {
-                        'timestamp': bet.get('bet_placed_at', ''),
-                        'date_placed': bet.get('bet_placed_at', '')[:10] if bet.get('bet_placed_at') else '',
-                        'game_id': bet.get('game_id', ''),
-                        'sport': bet.get('sport', ''),
-                        'game': bet.get('game', ''),
-                        'commence_time': bet.get('commence_time', ''),
-                        'market': bet.get('market', ''),
-                        'outcome': bet.get('outcome', ''),
-                        'bookmaker': bet.get('bookmaker', ''),
-                        'bookmaker_key': bet.get('bookmaker_key', ''),
-                        'bet_odds': bet.get('odds', 0),
-                        'sharp_avg_odds': bet.get('sharp_avg_odds', 0),
-                        'true_probability_pct': bet.get('true_probability', 0) * 100,
-                        'ev_percentage': bet.get('ev', 0) * 100,
-                        'bankroll': self.initial_bankroll,  # Always initial bankroll for sizing
-                        'kelly_percentage': bet.get('kelly_pct', 0) * 100,
-                        'recommended_stake': bet.get('stake', 0),
-                        'expected_profit': bet.get('expected_profit', 0),
-                        'bet_result': bet.get('result', 'pending'),
-                        'actual_profit_loss': bet.get('actual_profit', 0),
-                        'bankroll_after': bet.get('bankroll_after', 0)
-                    }
-                    writer.writerow(row)
-            
-            print(f"💾 Exported {len(self.bets_placed)} bets to {filename}")
-            
-        except Exception as e:
-            print(f"❌ Error exporting bets to CSV: {e}")
     
     def save_results(self, results: Dict, filename: str = 'backtest_results.json'):
         """Save backtest results to file."""

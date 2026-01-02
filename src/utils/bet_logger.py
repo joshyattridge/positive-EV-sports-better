@@ -89,7 +89,8 @@ class BetLogger:
     
     def log_bet(self, opportunity: Dict[str, Any], 
                 bet_placed: bool = True,
-                notes: str = "") -> bool:
+                notes: str = "",
+                timestamp: Optional[str] = None) -> bool:
         """
         Log a bet opportunity to the CSV file.
         
@@ -97,6 +98,7 @@ class BetLogger:
             opportunity: The betting opportunity dictionary from PositiveEVScanner
             bet_placed: Whether the bet was actually placed (True) or just recorded (False)
             notes: Optional notes about the bet
+            timestamp: Optional timestamp to use (for backtesting). If None, uses current time.
             
         Returns:
             True if logged successfully, False otherwise
@@ -105,10 +107,18 @@ class BetLogger:
             # Extract Kelly stake info
             kelly_stake = opportunity.get('kelly_stake', {})
             
+            # Use provided timestamp or current time
+            if timestamp:
+                log_timestamp = timestamp
+                log_date = timestamp[:10] if len(timestamp) >= 10 else datetime.now().strftime('%Y-%m-%d')
+            else:
+                log_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                log_date = datetime.now().strftime('%Y-%m-%d')
+            
             # Prepare the bet record
             bet_record = {
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'date_placed': datetime.now().strftime('%Y-%m-%d'),
+                'timestamp': log_timestamp,
+                'date_placed': log_date,
                 'game_id': opportunity.get('game_id', ''),
                 'sport': opportunity.get('sport', ''),
                 'game': opportunity.get('game', ''),
