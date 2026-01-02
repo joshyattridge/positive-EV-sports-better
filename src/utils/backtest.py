@@ -68,8 +68,8 @@ class HistoricalBacktester:
         # Store initial bankroll for resets
         self.initial_bankroll = self.scanner.kelly.bankroll
         
-        # Initialize bet logger for CSV recording
-        self.bet_logger = BetLogger(log_path="data/backtest_bet_history.csv")
+        # Initialize bet logger for CSV recording (reset=True creates fresh file for each backtest)
+        self.bet_logger = BetLogger(log_path="data/backtest_bet_history.csv", reset=True)
         
         # Track results
         self.bets_placed = []

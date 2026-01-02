@@ -57,13 +57,14 @@ class BetLogger:
         'notes'  # Empty - for any additional notes
     ]
     
-    def __init__(self, log_path: str = "data/bet_history.csv", test_mode: bool = False):
+    def __init__(self, log_path: str = "data/bet_history.csv", test_mode: bool = False, reset: bool = False):
         """
         Initialize the bet logger.
         
         Args:
             log_path: Path to save bet logs (CSV file)
             test_mode: If True, logs to a test file instead of the main bet history
+            reset: If True, creates a fresh CSV file (for backtesting). If False, appends to existing.
         """
         if test_mode:
             # When in test mode, use a separate test bet history file
@@ -71,12 +72,32 @@ class BetLogger:
         
         self.log_path = Path(log_path)
         self.test_mode = test_mode
-        self._ensure_csv_exists()
+        
+        if reset:
+            # For backtesting: always start with a fresh file
+            self._create_fresh_csv()
+        else:
+            # For live betting: append to existing file
+            self._ensure_csv_exists()
+    
+    def _create_fresh_csv(self):
+        """
+        Create a fresh CSV file with headers, overwriting any existing file.
+        Used for backtesting to ensure clean data.
+        """
+        try:
+            with open(self.log_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=self.CSV_HEADERS)
+                writer.writeheader()
+            print(f"✅ Created fresh bet log file: {self.log_path}")
+        except Exception as e:
+            print(f"❌ Error creating bet log file: {e}")
     
     def _ensure_csv_exists(self):
         """
         Ensure the CSV file exists with proper headers.
         If the file doesn't exist, create it with headers.
+        If it exists, keep appending to it (for live betting).
         """
         if not self.log_path.exists():
             try:
