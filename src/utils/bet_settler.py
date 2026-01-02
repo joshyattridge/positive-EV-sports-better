@@ -107,7 +107,9 @@ class BetSettler:
         # Parse Over/Under and line
         if 'Over' in outcome:
             try:
-                line = float(outcome.split()[-1])
+                # Extract the line, removing parentheses if present
+                line_str = outcome.split()[-1].strip('()').lstrip('+')
+                line = float(line_str)
                 if total_score > line:
                     return ('win', stake * (bet_odds - 1))
                 elif total_score == line:
@@ -119,7 +121,9 @@ class BetSettler:
         
         elif 'Under' in outcome:
             try:
-                line = float(outcome.split()[-1])
+                # Extract the line, removing parentheses if present
+                line_str = outcome.split()[-1].strip('()').lstrip('+')
+                line = float(line_str)
                 if total_score < line:
                     return ('win', stake * (bet_odds - 1))
                 elif total_score == line:

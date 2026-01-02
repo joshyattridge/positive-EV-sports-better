@@ -235,16 +235,33 @@ def auto_settle_bets(dry_run: bool = False, paper_trade: bool = False):
         
         # Parse game date
         try:
-            from datetime import datetime as dt
+            from datetime import datetime as dt, timezone, timedelta
             # Handle multiple date formats
             if 'UTC' in commence_time:
                 # Format: "2025-12-17 20:00 UTC"
-                game_date = dt.strptime(commence_time, '%Y-%m-%d %H:%M UTC')
+                game_date = dt.strptime(commence_time, '%Y-%m-%d %H:%M UTC').replace(tzinfo=timezone.utc)
             else:
                 # ISO format: "2025-12-17T20:00:00Z"
                 game_date = dt.fromisoformat(commence_time.replace('Z', '+00:00'))
         except Exception as e:
             print(f"  ⚠️  Cannot parse date '{commence_time}' for: {game_str}")
+            still_pending_count += 1
+            continue
+        
+        # Check if game has started yet
+        current_time = dt.now(timezone.utc)
+        if game_date > current_time:
+            print(f"  ⏰ {game_str}: Game hasn't started yet (starts {commence_time})")
+            still_pending_count += 1
+            continue
+        
+        # Check if enough time has passed for game to finish
+        # Use 12 hour buffer to ensure any game has finished
+        duration_buffer = timedelta(hours=12)
+        time_since_start = current_time - game_date
+        
+        if time_since_start < duration_buffer:
+            print(f"  ⏳ {game_str}: Game likely still in progress (started {time_since_start.total_seconds() / 3600:.1f}h ago)")
             still_pending_count += 1
             continue
         
@@ -283,7 +300,6 @@ def auto_settle_bets(dry_run: bool = False, paper_trade: bool = False):
         except ValueError as e:
             print(f"  ⚠️  {e}")
             still_pending_count += 1
-            continuending_count += 1
             continue
         
         # Display result
