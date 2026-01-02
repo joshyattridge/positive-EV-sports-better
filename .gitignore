@@ -58,6 +58,9 @@ Thumbs.db
 *.jpg
 *.jpeg
 
+# Analysis outputs
+data/analysis_plots/
+
 data/.odds_cache.pkl
 data/serpapi_cache
 data/espn_cache
