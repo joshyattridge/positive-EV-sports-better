@@ -241,13 +241,17 @@ class BetSettler:
             
             if 'Over' in outcome:
                 try:
-                    line = float(outcome.split()[-1])
+                    # Extract the line, removing parentheses and + sign if present
+                    line_str = outcome.split()[-1].strip('()').lstrip('+')
+                    line = float(line_str)
                     return 'won' if total_score > line else 'lost'
                 except (ValueError, IndexError):
                     return None
             elif 'Under' in outcome:
                 try:
-                    line = float(outcome.split()[-1])
+                    # Extract the line, removing parentheses and + sign if present
+                    line_str = outcome.split()[-1].strip('()').lstrip('+')
+                    line = float(line_str)
                     return 'won' if total_score < line else 'lost'
                 except (ValueError, IndexError):
                     return None

@@ -522,7 +522,11 @@ class PositiveEVScanner:
                         for outcome in market.get('outcomes', []):
                             outcome_key = outcome['name']
                             if 'point' in outcome:
-                                outcome_key += f" ({outcome['point']:+.1f})"
+                                # For spreads, use +/- sign; for totals, just the number
+                                if market_type == 'spreads':
+                                    outcome_key += f" ({outcome['point']:+.1f})"
+                                else:  # totals
+                                    outcome_key += f" ({outcome['point']:.1f})"
                             outcome_names.append(outcome_key)
                         
                         # Store as frozen set for hashable comparison
@@ -547,7 +551,11 @@ class PositiveEVScanner:
                         for outcome in market.get('outcomes', []):
                             outcome_key = outcome['name']
                             if 'point' in outcome:
-                                outcome_key += f" ({outcome['point']:+.1f})"
+                                # For spreads, use +/- sign; for totals, just the number
+                                if market_type == 'spreads':
+                                    outcome_key += f" ({outcome['point']:+.1f})"
+                                else:  # totals
+                                    outcome_key += f" ({outcome['point']:.1f})"
                             
                             if outcome_key not in market_data:
                                 market_data[outcome_key] = []
