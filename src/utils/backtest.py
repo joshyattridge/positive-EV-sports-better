@@ -1091,11 +1091,16 @@ class HistoricalBacktester:
                     
                     bet['bankroll_after'] = self.current_bankroll
                     
-                    # Add to bankroll history
-                    bet_time = bet.get('bet_placed_at', bet.get('commence_time'))
-                    if bet_time:
-                        self.bankroll_timestamps.append(bet_time)
-                        self.bankroll_history.append(self.current_bankroll)
+                    # Add to bankroll history - ALWAYS append for every settled bet
+                    # to ensure final bankroll tracking is accurate
+                    bet_time = bet.get('bet_placed_at') or bet.get('commence_time')
+                    if not bet_time:
+                        # Fallback: use current timestamp if somehow both are missing
+                        # This should never happen but ensures we don't skip bankroll updates
+                        bet_time = datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
+                    
+                    self.bankroll_timestamps.append(bet_time)
+                    self.bankroll_history.append(self.current_bankroll)
                     
                     # Update CSV with result
                     csv_timestamp = bet.get('csv_timestamp')
@@ -1284,165 +1289,6 @@ class HistoricalBacktester:
             'pending_bets_list': pending_bets
         }
     
-    def plot_results(self, save_path: str = 'backtest_chart.png'):
-        """
-        Create a graph showing bankroll progression over time.
-        
-        Args:
-            save_path: Path to save the chart image
-        """
-        try:
-            print(f"\n📊 Generating bankroll chart...")
-            
-            print(f"   Timestamps: {len(self.bankroll_timestamps)}")
-            print(f"   Bankroll history: {len(self.bankroll_history)}")
-            
-            if not self.bankroll_timestamps or not self.bankroll_history:
-                print("   ⚠️ No data to plot - timestamps or history is empty")
-                return
-            
-            # Convert timestamps to datetime objects
-            from datetime import datetime, timedelta
-            from collections import OrderedDict
-            import numpy as np
-            
-            # Prepend initial timestamp (use first bet time or arbitrary start if no bets)
-            if self.bankroll_timestamps:
-                first_timestamp = self._parse_timestamp(self.bankroll_timestamps[0])
-                # Use a time slightly before the first bet to show initial bankroll
-                initial_timestamp = first_timestamp - timedelta(minutes=1)
-            else:
-                # No bets placed, use current time
-                initial_timestamp = datetime.now()
-            
-            # Create full timestamp list including initial bankroll point
-            all_timestamps = [initial_timestamp] + [self._parse_timestamp(ts) for ts in self.bankroll_timestamps]
-            dates = all_timestamps
-            print(f"   Converted {len(dates)} timestamps to dates (including initial bankroll)")
-            
-            # Sort by timestamp to fix out-of-order bets
-            sorted_data = sorted(zip(dates, self.bankroll_history), key=lambda x: x[0])
-            dates = [d for d, _ in sorted_data]
-            bankroll_values = [b for _, b in sorted_data]
-            
-            print(f"   Sorted {len(dates)} data points chronologically")
-            
-            # Aggregate by hour - keep last bankroll value for each hour
-            hourly_data = OrderedDict()
-            for date, bankroll in zip(dates, bankroll_values):
-                # Round down to the hour
-                hour_key = date.replace(minute=0, second=0, microsecond=0)
-                hourly_data[hour_key] = bankroll
-            
-            # Convert to lists
-            plot_dates = list(hourly_data.keys())
-            plot_bankroll = list(hourly_data.values())
-            
-            print(f"   Aggregated to {len(plot_dates)} daily data points")
-            
-            # Apply smoothing with a simple moving average if we have enough data points
-            if len(plot_bankroll) > 3:
-                window = min(3, len(plot_bankroll) // 5)  # Adaptive window size
-                if window > 1:
-                    smoothed = np.convolve(plot_bankroll, np.ones(window)/window, mode='valid')
-                    # Adjust dates to match smoothed data
-                    offset = window // 2
-                    smoothed_dates = plot_dates[offset:offset+len(smoothed)]
-                    plot_dates = smoothed_dates
-                    plot_bankroll = smoothed.tolist()
-                    print(f"   Applied smoothing with window size {window}")
-            
-            # Calculate daily bet volume
-            bet_volume_by_day = OrderedDict()
-            for bet in self.bets_placed:
-                if 'bet_placed_at' in bet and bet['bet_placed_at']:
-                    bet_date = self._parse_timestamp(bet['bet_placed_at'])
-                    # Group by day
-                    day_key = bet_date.replace(hour=0, minute=0, second=0, microsecond=0)
-                    bet_volume_by_day[day_key] = bet_volume_by_day.get(day_key, 0) + 1
-            
-            volume_dates = list(bet_volume_by_day.keys())
-            volume_counts = list(bet_volume_by_day.values())
-            print(f"   Calculated bet volume for {len(volume_dates)} days")
-            
-            # Create figure with subplots - bankroll on top, volume on bottom
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), 
-                                           gridspec_kw={'height_ratios': [3, 1]})
-            
-            # Plot smoothed bankroll progression on top subplot
-            ax1.plot(plot_dates, plot_bankroll, 
-                    linewidth=3, color='#2E86AB', label='Bankroll (smoothed)', alpha=0.9)
-            
-            # Add horizontal line for initial bankroll
-            ax1.axhline(y=self.initial_bankroll, color='gray', linestyle='--', 
-                        linewidth=1, alpha=0.7, label='Initial Bankroll')
-            
-            # Calculate statistics for annotations
-            final_bankroll = self.bankroll_history[-1]
-            total_return = ((final_bankroll - self.initial_bankroll) / self.initial_bankroll) * 100
-            max_bankroll = max(self.bankroll_history)
-            min_bankroll = min(self.bankroll_history)
-            
-            # Calculate max drawdown percentage
-            peak = self.initial_bankroll
-            max_drawdown_pct = 0
-            for br in self.bankroll_history:
-                if br > peak:
-                    peak = br
-                drawdown_pct = (peak - br) / peak * 100 if peak > 0 else 0
-                if drawdown_pct > max_drawdown_pct:
-                    max_drawdown_pct = drawdown_pct
-            
-            # Calculate bet statistics (only settled bets)
-            settled_bets = [b for b in self.bets_placed if b.get('result') is not None]
-            total_bets = len(settled_bets)
-            won_bets = sum(1 for b in settled_bets if b.get('result') == 'won')
-            win_rate = (won_bets / total_bets * 100) if total_bets > 0 else 0
-            
-            total_staked = sum(b['stake'] for b in settled_bets) if settled_bets else 0
-            total_profit = sum(b.get('actual_profit', 0) for b in settled_bets) if settled_bets else 0
-            roi = (total_profit / total_staked * 100) if total_staked > 0 else 0
-            
-            # Add annotations for key stats (multi-line title for readability)
-            ax1.set_title(f'Backtest Results: Bankroll Progression\n'
-                      f'Bets: {total_bets} | Win Rate: {win_rate:.1f}% | ROI: {roi:.2f}% | '
-                      f'Return: {total_return:+.2f}%\n'
-                      f'Max Drawdown: {max_drawdown_pct:.2f}% | Final: £{final_bankroll:.2f} | '
-                      f'Peak: £{max_bankroll:.2f}',
-                      fontsize=13, fontweight='bold', pad=20)
-            
-            # Formatting for top subplot
-            ax1.set_ylabel('Bankroll (£)', fontsize=12, fontweight='bold')
-            ax1.grid(True, alpha=0.3, linestyle='--')
-            ax1.legend(loc='best', fontsize=10)
-            
-            # Plot bet volume bar chart on bottom subplot
-            ax2.bar(volume_dates, volume_counts, width=0.8, 
-                   color='#A23B72', alpha=0.7, edgecolor='#6B1E45', linewidth=0.5)
-            ax2.set_ylabel('Bets Placed', fontsize=12, fontweight='bold')
-            ax2.set_xlabel('Date', fontsize=12, fontweight='bold')
-            ax2.grid(True, alpha=0.3, linestyle='--', axis='y')
-            
-            # Format x-axis dates for both subplots
-            fig.autofmt_xdate()
-            from matplotlib.dates import DateFormatter
-            ax1.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
-            ax2.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
-            
-            # Tight layout to prevent label cutoff
-            plt.tight_layout()
-            
-            # Save the figure
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"   ✅ Chart saved to: {save_path}")
-            
-            # Close to free memory
-            plt.close()
-        except Exception as e:
-            print(f"   ❌ Error generating chart: {e}")
-            import traceback
-            traceback.print_exc()
-    
     def save_results(self, results: Dict, filename: str = 'backtest_results.json'):
         """Save backtest results to file."""
         with open(filename, 'w') as f:
@@ -1570,12 +1416,6 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     
     if results:
         backtester.save_results(results, args.output)
-        
-        # Generate chart
-        print("\n🎨 Preparing to generate visualization...")
-        chart_path = args.output.replace('.json', '_chart.png')
-        print(f"   Chart will be saved to: {chart_path}")
-        backtester.plot_results(chart_path)
         
         print("\n💡 TIP: Compare these results with your simulator:")
         print(f"   Actual Avg EV: {results['avg_ev']*100:.2f}% vs Simulator: 2.91%")

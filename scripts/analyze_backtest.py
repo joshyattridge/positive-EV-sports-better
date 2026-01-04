@@ -389,20 +389,23 @@ class BacktestAnalyzer:
         pdf_filename = output_dir / 'backtest_analysis_report.pdf'
         
         with PdfPages(pdf_filename) as pdf:
-            # 1. Cumulative Profit Over Time
-            print("✓ Generating: Cumulative Profit Over Time")
+            # 1. Bankroll Progression Over Time
+            print("✓ Generating: Bankroll Progression Over Time")
             fig, ax = plt.subplots(figsize=(14, 8))
             df_sorted = df.sort_values('date_placed')
+            # Get initial bankroll from first row (all rows have same value)
+            initial_bankroll = df_sorted['bankroll'].iloc[0]
             df_sorted['cumulative_profit'] = df_sorted['actual_profit_loss'].cumsum()
-            ax.plot(df_sorted['date_placed'], df_sorted['cumulative_profit'], linewidth=2.5, color='steelblue')
-            ax.axhline(y=0, color='r', linestyle='--', alpha=0.5, linewidth=2)
-            ax.fill_between(df_sorted['date_placed'], df_sorted['cumulative_profit'], 0, 
-                           where=(df_sorted['cumulative_profit'] >= 0), alpha=0.3, color='green', label='Profit')
-            ax.fill_between(df_sorted['date_placed'], df_sorted['cumulative_profit'], 0, 
-                           where=(df_sorted['cumulative_profit'] < 0), alpha=0.3, color='red', label='Loss')
-            ax.set_title('Cumulative Profit Over Time', fontsize=16, fontweight='bold', pad=20)
+            df_sorted['actual_bankroll'] = initial_bankroll + df_sorted['cumulative_profit']
+            ax.plot(df_sorted['date_placed'], df_sorted['actual_bankroll'], linewidth=2.5, color='steelblue')
+            ax.axhline(y=initial_bankroll, color='gray', linestyle='--', alpha=0.5, linewidth=2, label='Initial Bankroll')
+            ax.fill_between(df_sorted['date_placed'], df_sorted['actual_bankroll'], initial_bankroll, 
+                           where=(df_sorted['actual_bankroll'] >= initial_bankroll), alpha=0.3, color='green', label='Profit')
+            ax.fill_between(df_sorted['date_placed'], df_sorted['actual_bankroll'], initial_bankroll, 
+                           where=(df_sorted['actual_bankroll'] < initial_bankroll), alpha=0.3, color='red', label='Loss')
+            ax.set_title('Bankroll Progression Over Time', fontsize=16, fontweight='bold', pad=20)
             ax.set_xlabel('Date', fontsize=12)
-            ax.set_ylabel('Cumulative Profit ($)', fontsize=12)
+            ax.set_ylabel('Bankroll ($)', fontsize=12)
             ax.grid(True, alpha=0.3)
             ax.legend(loc='best')
             plt.xticks(rotation=45)
@@ -736,19 +739,21 @@ class BacktestAnalyzer:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
             
             df_sorted = df.sort_values('date_placed')
+            initial_bankroll = df_sorted['bankroll'].iloc[0]
             df_sorted['cumulative'] = df_sorted['actual_profit_loss'].cumsum()
-            df_sorted['running_max'] = df_sorted['cumulative'].cummax()
-            df_sorted['drawdown'] = df_sorted['cumulative'] - df_sorted['running_max']
-            df_sorted['drawdown_pct'] = (df_sorted['drawdown'] / (df_sorted['running_max'].abs() + 1)) * 100
+            df_sorted['actual_bankroll'] = initial_bankroll + df_sorted['cumulative']
+            df_sorted['running_max'] = df_sorted['actual_bankroll'].cummax()
+            df_sorted['drawdown'] = df_sorted['actual_bankroll'] - df_sorted['running_max']
+            df_sorted['drawdown_pct'] = (df_sorted['drawdown'] / df_sorted['running_max']) * 100
             
-            # Cumulative with drawdown
-            ax1.plot(df_sorted['date_placed'], df_sorted['cumulative'], linewidth=2, label='Cumulative Profit', color='blue')
+            # Bankroll with drawdown
+            ax1.plot(df_sorted['date_placed'], df_sorted['actual_bankroll'], linewidth=2, label='Bankroll', color='blue')
             ax1.plot(df_sorted['date_placed'], df_sorted['running_max'], linewidth=2, linestyle='--', 
-                    label='Peak Equity', color='green', alpha=0.7)
-            ax1.fill_between(df_sorted['date_placed'], df_sorted['cumulative'], df_sorted['running_max'], 
+                    label='Peak Bankroll', color='green', alpha=0.7)
+            ax1.fill_between(df_sorted['date_placed'], df_sorted['actual_bankroll'], df_sorted['running_max'], 
                            alpha=0.3, color='red', label='Drawdown')
-            ax1.set_title('Cumulative Profit with Drawdown Periods', fontsize=14, fontweight='bold')
-            ax1.set_ylabel('Profit ($)', fontsize=12)
+            ax1.set_title('Bankroll with Drawdown Periods', fontsize=14, fontweight='bold')
+            ax1.set_ylabel('Bankroll ($)', fontsize=12)
             ax1.legend(loc='best')
             ax1.grid(True, alpha=0.3)
             
