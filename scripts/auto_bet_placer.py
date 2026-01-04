@@ -65,7 +65,10 @@ class AutoBetPlacer:
         # Get available bookmakers from credentials (no validation needed, auto-detected)
         available_bookmakers = BookmakerCredentials.get_available_bookmakers()
         if not available_bookmakers and not paper_trade:
-            logger.warning("No bookmaker credentials found. Cannot place bets.")
+            logger.warning(
+                "No bookmaker credentials found. Cannot place bets. "
+                "Please add credentials to .env file (e.g., FANDUEL_USERNAME and FANDUEL_PASSWORD)."
+            )
     
     def find_best_opportunities(self, max_count: Optional[int] = 1) -> List[Dict[str, Any]]:
         """

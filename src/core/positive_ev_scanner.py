@@ -77,6 +77,9 @@ class PositiveEVScanner:
             'no_betting_bookmakers': 0  # Track when no betting bookmakers have odds
         }
         
+        # Track bookmakers missing credentials during scanning
+        self._missing_credentials_bookmakers = set()
+        
         self.base_url = "https://api.the-odds-api.com/v4"
         
         # Sharp bookmakers - read from env or use defaults
@@ -86,7 +89,10 @@ class PositiveEVScanner:
         # Betting bookmakers - auto-detect from credentials
         self.betting_bookmakers = BookmakerCredentials.get_available_bookmakers()
         if not self.betting_bookmakers:
-            logger.warning("No bookmaker credentials found. Please add credentials to .env file.")
+            logger.warning(
+                "No bookmaker credentials found. Please add credentials to .env file. "
+                "Example: FANDUEL_USERNAME=your_username and FANDUEL_PASSWORD=your_password"
+            )
         
         # Minimum EV threshold - read from env or use default
         self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.02'))
@@ -714,6 +720,8 @@ class PositiveEVScanner:
                         # Only show opportunities for betting bookmakers
                         if odds_data['bookmaker'] not in self.betting_bookmakers:
                             self._filter_stats['no_betting_bookmakers'] += 1
+                            # Track which bookmaker is missing credentials
+                            self._missing_credentials_bookmakers.add(odds_data['bookmaker'])
                             continue
                         
                         bet_odds = odds_data['odds']
@@ -920,6 +928,14 @@ class PositiveEVScanner:
         success_count = len(all_opportunities)
         logger.info(f"Scanned {scanned_count} sports: {success_count} with opportunities, {error_count} errors")
         
+        # Log warning about missing credentials for specific bookmakers
+        if self._missing_credentials_bookmakers:
+            bookmaker_list = ', '.join(sorted(self._missing_credentials_bookmakers))
+            logger.warning(
+                f"Missing credentials for bookmakers: {bookmaker_list}. "
+                f"Add credentials to .env file (e.g., FANDUEL_USERNAME and FANDUEL_PASSWORD)."
+            )
+        
         # Check if quota was exceeded
         if self._quota_exceeded:
             logger.error("API quota exceeded. No odds data available. Check usage at: https://the-odds-api.com/account")
@@ -993,6 +1009,7 @@ class PositiveEVScanner:
         """Reset filter statistics to zero."""
         for key in self._filter_stats:
             self._filter_stats[key] = 0
+        self._missing_credentials_bookmakers.clear()
     
     def print_opportunities(self, opportunities: Dict[str, List[Dict]]):
         """
