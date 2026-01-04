@@ -5,6 +5,9 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
 
+# Enable unbuffered Python output (fixes logging in screen/background)
+export PYTHONUNBUFFERED=1
+
 # Check if running in Docker (no venv needed) or use venv
 if [ -f "/.dockerenv" ] || [ -n "$DOCKER_CONTAINER" ]; then
     # Running in Docker - use system Python
