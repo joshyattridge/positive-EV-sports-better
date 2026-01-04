@@ -690,7 +690,7 @@ class HistoricalBacktester:
                     'reason': f'{type(e).__name__}: {str(e)}'
                 })
         
-        # Store in memory cache
+        # Store in memory cache for faster lookups during settlement
         self.memory_cache.update(results_cache)
         print(f"   ✅ Cached {len(results_cache)} game results in memory")
         
@@ -961,6 +961,10 @@ class HistoricalBacktester:
         # Bulk fetch all historical odds data upfront (eliminates 750 function calls)
         odds_data_cache = self.bulk_get_historical_odds(sports, all_timestamps)
         
+        # Free memory: clear timestamp list (data is now in odds_data_cache)
+        all_timestamps.clear()
+        all_timestamps = None
+        
         # Create progress bar with finer granularity (update per sport processed)
         total_iterations = total_snapshots * len(sports)
         pbar = tqdm(total=total_iterations, desc="Backtesting", unit="check", ncols=120, 
@@ -1023,11 +1027,21 @@ class HistoricalBacktester:
                     pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities, 
                                     'bankroll': f'£{self.current_bankroll:.0f}'})
             
+            # Free memory: clear opportunities list for this timestamp
+            all_opportunities.clear()
+            
             # Move to next snapshot
             current += timedelta(hours=snapshot_interval_hours)
         
         # Close progress bar
         pbar.close()
+        
+        # Free memory: clear odds data cache (no longer needed after scanning phase)
+        if odds_data_cache:
+            cache_size_mb = len(str(odds_data_cache)) / 1024 / 1024
+            print(f"\n🧹 Clearing odds data cache ({cache_size_mb:.1f} MB)...")
+            odds_data_cache.clear()
+            odds_data_cache = None
         
         # Settle all pending bets at the end of backtest using Google results
         pending_bets = [b for b in self.bets_placed if b.get('result') is None]
@@ -1036,6 +1050,14 @@ class HistoricalBacktester:
             print(f"SETTLING PENDING BETS WITH GOOGLE RESULTS")
             print(f"{'='*80}")
             print(f"Fetching real results for {len(pending_bets)} pending bets...\n")
+            
+            # Clear odds cache to free memory before settlement
+            if self.memory_cache:
+                import sys
+                cache_size_mb = sys.getsizeof(self.memory_cache) / 1024 / 1024
+                print(f"🧹 Clearing odds cache to free memory ({cache_size_mb:.1f} MB)...")
+                self.memory_cache.clear()
+                print(f"✅ Memory freed. Cache will be rebuilt with game results only.\n")
             
             # Pre-fetch all unique game results in parallel to speed up settlement
             if self.espn_scraper:

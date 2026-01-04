@@ -528,7 +528,7 @@ class GoogleSearchScraper:
         # Second: If not in any cache, try API calls (only if needed)
         for query in queries:
             # Make API call
-            search_results = self.search_sports_score(query, use_cache=False)
+            search_results = self.search_sports_score(query, use_cache=True)
             
             if not search_results:
                 continue
