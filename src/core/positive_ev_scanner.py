@@ -15,9 +15,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from src.core.kelly_criterion import KellyCriterion
 from src.utils.bet_logger import BetLogger
 from src.utils.bet_repository import BetRepository
+from src.utils.error_logger import logger
 from src.utils.odds_utils import (
     decimal_to_fractional, 
     calculate_implied_probability, 
@@ -84,10 +86,7 @@ class PositiveEVScanner:
         # Betting bookmakers - auto-detect from credentials
         self.betting_bookmakers = BookmakerCredentials.get_available_bookmakers()
         if not self.betting_bookmakers:
-            print("⚠️  Warning: No bookmaker credentials found. Please add credentials to .env file.")
-        
-        print(f"🔍 Sharp books configured: {', '.join(self.sharp_books)}")
-        print(f"💰 Betting bookmakers detected: {', '.join(self.betting_bookmakers) if self.betting_bookmakers else 'NONE'}")
+            logger.warning("No bookmaker credentials found. Please add credentials to .env file.")
         
         # Minimum EV threshold - read from env or use default
         self.min_ev_threshold = float(os.getenv('MIN_EV_THRESHOLD', '0.02'))
@@ -132,6 +131,7 @@ class PositiveEVScanner:
         self._cache_file.parent.mkdir(exist_ok=True)
         self._cache_duration = 60  # 1 minute in seconds
         self._odds_cache = self._load_cache()
+        self._cache_lock = threading.Lock()  # Thread-safe cache access
         
         # Concurrent request settings
         # 10 concurrent workers - aggressive but safe based on API rate limiting
@@ -166,16 +166,19 @@ class PositiveEVScanner:
                     pass  # Loaded cache from disk
                 return cache
         except Exception as e:
-            print(f"⚠️  Could not load cache: {e}")
+            logger.warning(f"Could not load cache: {e}")
         return {}
     
     def _save_cache(self):
-        """Save cache to disk."""
+        """Save cache to disk (thread-safe)."""
         try:
+            with self._cache_lock:
+                # Create a copy to avoid "dictionary changed size during iteration" error
+                cache_copy = dict(self._odds_cache)
             with open(self._cache_file, 'wb') as f:
-                pickle.dump(self._odds_cache, f)
+                pickle.dump(cache_copy, f)
         except Exception as e:
-            print(f"⚠️  Could not save cache: {e}")
+            logger.warning(f"Could not save cache: {e}")
     
     def get_available_sports(self) -> List[Dict]:
         """
@@ -272,7 +275,8 @@ class PositiveEVScanner:
             data = response.json()
             
             # Cache the result in memory and persist to disk
-            self._odds_cache[cache_key] = (data, current_time)
+            with self._cache_lock:
+                self._odds_cache[cache_key] = (data, current_time)
             self._save_cache()
             
             return data
@@ -359,7 +363,8 @@ class PositiveEVScanner:
                     if all_games:
                         # Cache with successful markets only
                         success_cache_key = f"{sport}_{'_'.join(successful_markets)}"
-                        self._odds_cache[success_cache_key] = (all_games, current_time)
+                        with self._cache_lock:
+                            self._odds_cache[success_cache_key] = (all_games, current_time)
                         self._save_cache()
                         
                         return all_games
@@ -832,12 +837,8 @@ class PositiveEVScanner:
         if not games:
             error_info = self._last_error.get(sport, {})
             if error_info:
-                code = error_info.get('code', 'unknown')
-                msg = error_info.get('message', 'Unknown error')
-                print(f"⚠️  {sport}: No odds (Error {code}: {msg[:50]})")
+                logger.warning(f"{sport}: No odds - Error {error_info.get('code', 'unknown')}: {error_info.get('message', 'Unknown error')}")
             return []
-        
-        print(f"✓ {sport}: Analyzing {len(games)} games")
         
         # Get already-bet game IDs if filtering is enabled
         already_bet_game_ids: Set[str] = set()
@@ -847,10 +848,10 @@ class PositiveEVScanner:
         # Use core analysis method
         opportunities = self.analyze_games_for_ev(games, sport, already_bet_game_ids)
         
-        # Show filter stats for this sport
+        # Log filter stats for this sport
         stats = self.get_filter_stats()
         if stats['no_sharp_odds'] > 0 or stats['no_betting_bookmakers'] > 0:
-            print(f"   ⚠️  {sport}: {stats['no_sharp_odds']} missing sharp odds, {stats['no_betting_bookmakers']} not from betting bookmakers")
+            logger.info(f"{sport}: {stats['no_sharp_odds']} missing sharp odds, {stats['no_betting_bookmakers']} not from betting bookmakers")
         
         return opportunities
     
@@ -870,7 +871,6 @@ class PositiveEVScanner:
             sport_keys = [sport.strip() for sport in betting_sports_str.split(',')]
         
         # First, filter to only sports with active events (FREE API call, doesn't count against quota)
-        print(f"🔍 Checking {len(sport_keys)} sports for active events...")
         active_sports = []
         
         with ThreadPoolExecutor(max_workers=self.max_concurrent_requests) as executor:
@@ -888,17 +888,13 @@ class PositiveEVScanner:
                 except Exception:
                     pass  # Skip sports with errors
         
-        print(f"✓ Found {len(active_sports)} sports with active events (skipping {len(sport_keys) - len(active_sports)} inactive sports)")
-        
         if not active_sports:
-            print("⚠️  No active events found in any sport")
+            logger.info("No active events found in any sport")
             return {}
         
         all_opportunities = {}
         
         # Use ThreadPoolExecutor for concurrent scanning of active sports only
-        print(f"🚀 Scanning {len(active_sports)} active sports with up to {self.max_concurrent_requests} concurrent requests...")
-        
         scanned_count = 0
         error_count = 0
         
@@ -919,14 +915,14 @@ class PositiveEVScanner:
                         all_opportunities[sport] = opportunities
                 except Exception as e:
                     error_count += 1
-        # Print summary instead of individual messages
+                    logger.error(f"Error scanning {sport}: {e}", exc_info=True)
+        # Log summary
         success_count = len(all_opportunities)
-        print(f"✓ Scanned {scanned_count} sports: {success_count} with opportunities, {error_count} errors")
+        logger.info(f"Scanned {scanned_count} sports: {success_count} with opportunities, {error_count} errors")
         
         # Check if quota was exceeded
         if self._quota_exceeded:
-            print(f"\n⚠️  WARNING: API quota exceeded. No odds data available.")
-            print(f"   Check your usage at: https://the-odds-api.com/account")
+            logger.error("API quota exceeded. No odds data available. Check usage at: https://the-odds-api.com/account")
         
         return all_opportunities
         return all_opportunities

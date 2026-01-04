@@ -22,6 +22,7 @@ from src.automation.prompt_generator import BetPlacementPromptGenerator
 from src.core.kelly_criterion import KellyCriterion
 from src.utils.bet_logger import BetLogger
 from src.utils.config import BookmakerCredentials
+from src.utils.error_logger import logger
 from anthropic import Anthropic
 
 # Load environment variables
@@ -64,7 +65,7 @@ class AutoBetPlacer:
         # Get available bookmakers from credentials (no validation needed, auto-detected)
         available_bookmakers = BookmakerCredentials.get_available_bookmakers()
         if not available_bookmakers and not paper_trade:
-            print("⚠️  Warning: No bookmaker credentials found. Cannot place bets.")
+            logger.warning("No bookmaker credentials found. Cannot place bets.")
     
     def find_best_opportunities(self, max_count: Optional[int] = 1) -> List[Dict[str, Any]]:
         """
@@ -76,48 +77,26 @@ class AutoBetPlacer:
         Returns:
             List of opportunity dictionaries (empty if none found)
         """
-        if max_count and max_count > 1:
-            print(f"\n🔍 Scanning for top {max_count} opportunities...")
-        else:
-            print(f"\n🔍 Scanning for opportunities...")
-        
         # Reset filter stats before scanning
+        self.scanner.reset_filter_stats()
         self.scanner.reset_filter_stats()
         
         # Scan all sports
         all_opportunities = self.scanner.scan_all_sports()
         
         if not all_opportunities:
-            # Get and print filter stats
+            # Get and log filter stats
             stats = self.scanner.get_filter_stats()
             total_filtered = sum(v for k, v in stats.items() if k.startswith('filtered_'))
             
-            # Show critical issues first
+            # Log critical issues
             if stats['no_sharp_odds'] > 0:
-                print(f"⚠️  {stats['no_sharp_odds']} opportunities had no sharp book odds (check SHARP_BOOKS config)")
+                logger.warning(f"{stats['no_sharp_odds']} opportunities had no sharp book odds (check SHARP_BOOKS config)")
             if stats['no_betting_bookmakers'] > 0:
-                print(f"⚠️  {stats['no_betting_bookmakers']} opportunities not from your betting bookmakers")
+                logger.warning(f"{stats['no_betting_bookmakers']} opportunities not from your betting bookmakers")
             
             if total_filtered > 0:
-                print(f"ℹ️  {total_filtered} opportunities filtered out:")
-                if stats['filtered_already_bet'] > 0:
-                    print(f"   • {stats['filtered_already_bet']} already bet on")
-                if stats['filtered_live_games'] > 0:
-                    print(f"   • {stats['filtered_live_games']} live games")
-                if stats['filtered_too_far_ahead'] > 0:
-                    print(f"   • {stats['filtered_too_far_ahead']} too far ahead")
-                if stats['filtered_max_odds'] > 0:
-                    print(f"   • {stats['filtered_max_odds']} odds too high")
-                if stats['filtered_min_ev'] > 0:
-                    print(f"   • {stats['filtered_min_ev']} below min EV")
-                if stats['filtered_min_probability'] > 0:
-                    print(f"   • {stats['filtered_min_probability']} below min probability")
-                if stats['filtered_min_kelly'] > 0:
-                    print(f"   • {stats['filtered_min_kelly']} below min Kelly")
-                if stats['filtered_failed_bets'] > 0:
-                    print(f"   • {stats['filtered_failed_bets']} previously failed")
-            elif stats['no_sharp_odds'] == 0 and stats['no_betting_bookmakers'] == 0:
-                print("❌ No +EV opportunities found")
+                logger.info(f"{total_filtered} opportunities filtered: {stats['filtered_already_bet']} already bet, {stats['filtered_too_far_ahead']} too far ahead, {stats['filtered_max_odds']} odds too high, {stats['filtered_min_ev']} below min EV")
             return []
         
         # Flatten all opportunities into a single list
@@ -126,7 +105,6 @@ class AutoBetPlacer:
             all_opps_list.extend(opps)
         
         if not all_opps_list:
-            print("❌ No +EV opportunities found")
             return []
         
         # Sort opportunities using the scanner's configured method
@@ -135,21 +113,15 @@ class AutoBetPlacer:
         # Apply one-bet-per-game filter if enabled
         filtered_opps = self.scanner.filter_one_bet_per_game(sorted_opps)
         
-        # Show filter summary if anything was filtered
-        stats = self.scanner.get_filter_stats()
-        if stats['filtered_one_per_game'] > 0:
-            print(f"ℹ️  Filtered {stats['filtered_one_per_game']} duplicates (one bet per game)")
-        
         # Get top N opportunities
         if max_count:
             top_opps = filtered_opps[:max_count]
         else:
             top_opps = filtered_opps
         
-        print(f"\n✅ Found {len(top_opps)} opportunity(ies)\n")
+        print(f"\n✅ {len(top_opps)} opportunity(ies) found\n")
         for i, opp in enumerate(top_opps, 1):
-            print(f"#{i}: {opp['game']} - {opp['outcome']} @ {opp['odds']:.2f} ({opp['bookmaker']})")
-            print(f"   EV: +{opp['ev_percentage']:.2f}% | Stake: £{opp['kelly_stake']['recommended_stake']:.2f} | Exp. Profit: £{opp['expected_profit']:.2f}")
+            print(f"#{i}: {opp['game']} - {opp['outcome']} @ {opp['odds']:.2f} ({opp['bookmaker']}) | EV: +{opp['ev_percentage']:.2f}% | £{opp['kelly_stake']['recommended_stake']:.2f}")
         
         return top_opps
     
@@ -425,27 +397,23 @@ async def run_bet_cycle(dry_run: bool, paper_trade: bool, placer: AutoBetPlacer,
             print("\n❌ No betting opportunities found")
             return 0
         
-        print(f"\n🎯 Attempting to place {len(opportunities)} bet(s)...\n")
-        
         for i, opp in enumerate(opportunities, 1):
-            print("="*80)
-            print(f"📊 BET {i}/{len(opportunities)}")
-            print("="*80)
             
             # Place this specific bet
+            bet_time = datetime.now()
             result = await placer.place_specific_bet(opp, dry_run=dry_run)
             
             if result['success']:
                 bets_placed += 1
-                print(f"\n✅ Bet {i} placed successfully")
+                print(f"✅ [{bet_time.strftime('%H:%M:%S')}] {opp['game']} - {opp['outcome']} @ {opp['odds']:.2f} | £{opp['kelly_stake']['recommended_stake']:.2f}")
             else:
-                print(f"\n❌ Bet {i} failed: {result.get('message', 'Unknown error')}")
+                error_msg = result.get('message', 'Unknown error')[:50]
+                print(f"❌ [{bet_time.strftime('%H:%M:%S')}] Failed: {error_msg}")
+                logger.error(f"Bet placement failed: {result.get('message', 'Unknown error')}")
             
             # Small delay between bets
             if i < len(opportunities):
                 await asyncio.sleep(2)
-        
-        print(f"\n📈 Bets placed this cycle: {bets_placed}/{len(opportunities)}")
     else:
         # Single bet mode
         result = await run_single_bet(dry_run, paper_trade, placer)
@@ -475,26 +443,18 @@ async def main():
     
     args = parser.parse_args()
     
-    print("\n🤖 Auto Bet System - Started at {}".format(datetime.now().strftime('%H:%M:%S')))
+    mode = "Paper" if args.paper_trade else ("Dry run" if args.dry_run else "LIVE")
+    interval_info = f" | {args.interval}min intervals" if args.interval else ""
+    max_bets_info = f" | max {args.max_bets} bets" if args.max_bets else ""
+    print(f"\n🤖 [{datetime.now().strftime('%H:%M:%S')}] {mode} mode{interval_info}{max_bets_info}")
     
-    if args.paper_trade:
-        print("📄 Paper trading mode")
-    elif args.dry_run:
-        print("🔍 Dry run mode")
-    else:
-        print("⚠️  LIVE MODE - placing real bets!")
-        print("   Press Ctrl+C within 5 seconds to cancel...")
+    if not args.paper_trade and not args.dry_run:
+        print("⚠️  LIVE MODE - Press Ctrl+C within 5 seconds to cancel...")
         try:
             await asyncio.sleep(5)
         except KeyboardInterrupt:
-            print("\n❌ Cancelled by user")
+            print("\n❌ Cancelled")
             return
-    
-    if args.interval:
-        max_bets_msg = f"{args.max_bets} bet(s)" if args.max_bets else "1 bet"
-        print(f"🔄 Scanning every {args.interval} min (max {max_bets_msg} per scan)")
-    elif args.max_bets:
-        print(f"🎯 Placing up to {args.max_bets} bet(s)")
     
     placer = AutoBetPlacer(headless=args.headless, paper_trade=args.paper_trade)
     total_bets_placed = 0
@@ -506,14 +466,15 @@ async def main():
             import time
             while True:
                 cycle_count += 1
-                print(f"\n--- Cycle {cycle_count} ---")
+                cycle_start_time = datetime.now()
+                print(f"\n[{cycle_start_time.strftime('%H:%M:%S')}] Cycle {cycle_count} - Scanning...")
                 
                 # Place up to max_bets this cycle (resets each cycle)
                 cycle_bets_placed = await run_bet_cycle(args.dry_run, args.paper_trade, placer, args.max_bets)
                 total_bets_placed += cycle_bets_placed
                 
-                print(f"\n📊 Cycle summary: {cycle_bets_placed} placed | {total_bets_placed} total")
-                print(f"⏸️  Next scan at {datetime.fromtimestamp(time.time() + args.interval * 60).strftime('%H:%M:%S')}")
+                if cycle_bets_placed > 0:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] {cycle_bets_placed} placed | {total_bets_placed} total | Next: {datetime.fromtimestamp(time.time() + args.interval * 60).strftime('%H:%M:%S')}")
                 
                 await asyncio.sleep(args.interval * 60)
         else:
@@ -529,10 +490,6 @@ async def main():
         traceback.print_exc()
     finally:
         await placer.close()
-        
-        # Print bet history summary
-        print("")
-        placer.bet_logger.print_summary()
         print(f"\n⏰ Finished at {datetime.now().strftime('%H:%M:%S')}")
 
 

@@ -358,7 +358,7 @@ class TestIntervalAndMaxBetsFlags:
         # Create mock placer with multiple opportunities
         mock_placer = Mock()
         opportunities = [
-            {'game': f'Game {i}', 'odds': 2.0 + i*0.1, 'ev_percentage': 5.0 - i*0.5, 
+            {'game': f'Game {i}', 'outcome': f'Team {i}', 'odds': 2.0 + i*0.1, 'ev_percentage': 5.0 - i*0.5, 
              'bookmaker_key': 'bet365', 'kelly_stake': {'recommended_stake': 10.0}}
             for i in range(5)
         ]
