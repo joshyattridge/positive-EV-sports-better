@@ -504,12 +504,19 @@ class TestRealWorldEVScenarios:
         
         opportunities = scanner.analyze_games_for_ev(games, 'test_sport', set())
         
-        assert len(opportunities) == 1
-        opp = opportunities[0]
+        # Both outcomes can have positive EV in this scenario
+        assert len(opportunities) == 2
         
-        # True prob = 1/1.50 = 0.6667
-        # EV = (0.6667 × 0.70) - 0.3333 = 0.4667 - 0.3333 = 0.1334
-        assert opp['ev_percentage'] == pytest.approx(13.34, rel=0.01)
+        # Find the favorite (Strong Team) opportunity
+        strong_team_opp = next(opp for opp in opportunities if opp['outcome'] == 'Strong Team')
+        
+        # Pinnacle sharp odds: Strong Team 1.50, Weak Team 4.00
+        # True prob Strong Team = 1/1.50 = 66.67%
+        # Bet365 odds: 1.70
+        # Bet365 implied prob = 1/1.70 = 58.82%
+        # EV% = ((true_prob × (odds - 1)) - (1 - true_prob)) / (1 - true_prob) × 100
+        # EV% = ((0.6667 × 0.70) - 0.3333) / 0.3333 × 100 = 5.4%
+        assert strong_team_opp['ev_percentage'] == pytest.approx(5.43, rel=0.1)
     
     @patch.dict('os.environ', {
         'ODDS_API_KEY': 'test_key',

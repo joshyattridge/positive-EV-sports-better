@@ -655,13 +655,19 @@ class HistoricalBacktester:
         
         print(f"   Fetching results for {len(unique_games)} unique games...")
         
-        # Fetch results sequentially to avoid rate limiting
+        # Fetch results in parallel with rate limiting
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+        
         results_cache = {}
         failed_fetches = []
+        cache_lock = threading.Lock()
         
-        # Progress bar for fetching
-        from tqdm import tqdm
-        for game_key, game_info in tqdm(unique_games.items(), desc="Fetching results", unit="game", ncols=100):
+        # Use 20 parallel workers for good balance of speed and API respect
+        max_workers = 20
+        
+        def fetch_one_game(game_key, game_info):
+            """Fetch a single game result with proper error handling."""
             try:
                 result = self.espn_scraper.get_game_result(
                     sport=game_info['sport'],
@@ -671,10 +677,10 @@ class HistoricalBacktester:
                 )
                 
                 if result:
-                    results_cache[game_key] = result
+                    return (game_key, result, None)
                 else:
                     # Log when result lookup returns None
-                    failed_fetches.append({
+                    return (game_key, None, {
                         'game': f"{game_info['away_team']} @ {game_info['home_team']}",
                         'sport': game_info['sport'],
                         'date': str(game_info['game_date'].date()),
@@ -683,12 +689,38 @@ class HistoricalBacktester:
                     
             except Exception as e:
                 # Log exceptions during fetching
-                failed_fetches.append({
+                return (game_key, None, {
                     'game': f"{game_info['away_team']} @ {game_info['home_team']}",
                     'sport': game_info['sport'],
                     'date': str(game_info['game_date'].date()),
                     'reason': f'{type(e).__name__}: {str(e)}'
                 })
+        
+        # Progress bar for fetching
+        from tqdm import tqdm
+        pbar = tqdm(total=len(unique_games), desc="Fetching results", unit="game", ncols=100)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all fetch tasks
+            future_to_game = {
+                executor.submit(fetch_one_game, game_key, game_info): (game_key, game_info)
+                for game_key, game_info in unique_games.items()
+            }
+            
+            # Process as they complete
+            for future in as_completed(future_to_game):
+                game_key, result, failure = future.result()
+                
+                if result:
+                    with cache_lock:
+                        results_cache[game_key] = result
+                elif failure:
+                    with cache_lock:
+                        failed_fetches.append(failure)
+                
+                pbar.update(1)
+        
+        pbar.close()
         
         # Store in memory cache for faster lookups during settlement
         self.memory_cache.update(results_cache)
@@ -1069,13 +1101,46 @@ class HistoricalBacktester:
             failed_count = 0
             settlement_failures = []
             
-            # Create progress bar for settling bets
-            settle_pbar = tqdm(pending_bets, desc="Settling bets", unit="bet", ncols=120,
+            # Batch determine bet results in parallel (read-only operations on cached data)
+            print("⚡ Determining bet results in parallel...")
+            bet_results = {}
+            
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            import threading
+            results_lock = threading.Lock()
+            
+            def determine_result_batch(bet_index, bet):
+                """Determine result for a single bet."""
+                result = self.determine_bet_result(bet, scores_data, current_time=end)
+                return (bet_index, result)
+            
+            # Use 20 workers to determine results quickly
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = {
+                    executor.submit(determine_result_batch, i, bet): i 
+                    for i, bet in enumerate(pending_bets)
+                }
+                
+                result_pbar = tqdm(total=len(pending_bets), desc="Determining results", unit="bet", ncols=120)
+                for future in as_completed(futures):
+                    bet_index, result = future.result()
+                    with results_lock:
+                        bet_results[bet_index] = result
+                    result_pbar.update(1)
+                result_pbar.close()
+            
+            print(f"✅ Determined {len(bet_results)} results. Now applying sequentially...\n")
+            
+            # Prepare batch CSV updates
+            csv_updates = {}
+            
+            # Apply results sequentially (must be sequential for bankroll tracking)
+            settle_pbar = tqdm(enumerate(pending_bets), total=len(pending_bets), 
+                             desc="Applying results", unit="bet", ncols=120,
                              bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
             
-            for bet in settle_pbar:
-                # Use end time as current_time to check if game has completed
-                result = self.determine_bet_result(bet, scores_data, current_time=end)
+            for i, bet in settle_pbar:
+                result = bet_results.get(i)
                 
                 if result is not None:
                     # Update bet result and bankroll
@@ -1102,15 +1167,14 @@ class HistoricalBacktester:
                     self.bankroll_timestamps.append(bet_time)
                     self.bankroll_history.append(self.current_bankroll)
                     
-                    # Update CSV with result
+                    # Prepare CSV update (batch at end instead of individual writes)
                     csv_timestamp = bet.get('csv_timestamp')
                     if csv_timestamp:
                         bet_result_status = 'win' if result == 'won' else 'loss' if result == 'lost' else 'void'
-                        self.bet_logger.update_bet_result(
-                            timestamp=csv_timestamp,
-                            result=bet_result_status,
-                            actual_profit_loss=bet['actual_profit'],
-                            notes=f"Settled via Google/ESPN"
+                        csv_updates[csv_timestamp] = (
+                            bet_result_status,
+                            bet['actual_profit'],
+                            "Settled via Google/ESPN"
                         )
                     
                     settled_count += 1
@@ -1129,6 +1193,12 @@ class HistoricalBacktester:
                 settle_pbar.set_postfix({'settled': settled_count, 'failed': failed_count})
             
             settle_pbar.close()
+            
+            # Batch update CSV file (single write operation instead of 36K writes!)
+            if csv_updates:
+                print(f"\n💾 Writing {len(csv_updates)} bet results to CSV...")
+                updated = self.bet_logger.batch_update_bet_results(csv_updates)
+                print(f"✅ Updated {updated} bets in CSV file")
             
             print(f"\n✅ Settled {settled_count} bets with real Google results")
             if failed_count > 0:

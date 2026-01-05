@@ -229,7 +229,55 @@ class BetLogger:
             
         except Exception as e:
             print(f"❌ Error updating bet result: {e}")
-            return False    # Backward compatibility: delegate to BetRepository
+            return False
+    
+    def batch_update_bet_results(self, updates: Dict[str, tuple]) -> int:
+        """
+        Update multiple bet results in a single file operation (MUCH faster).
+        
+        Args:
+            updates: Dict mapping timestamp -> (result, actual_profit_loss, notes)
+                    e.g. {"2024-01-01 12:00:00": ("win", 10.5, "Settled via ESPN")}
+        
+        Returns:
+            Number of bets successfully updated
+        """
+        try:
+            # Read all existing bets
+            rows = []
+            updated_count = 0
+            actual_fieldnames = None
+            
+            with open(self.log_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                actual_fieldnames = reader.fieldnames
+                for row in reader:
+                    timestamp = row['timestamp']
+                    if timestamp in updates:
+                        result, actual_profit_loss, notes = updates[timestamp]
+                        # Update this row
+                        row['bet_result'] = result
+                        if actual_profit_loss is not None:
+                            row['actual_profit_loss'] = actual_profit_loss
+                        if notes:
+                            existing_notes = row.get('notes', '')
+                            row['notes'] = f"{existing_notes} | {notes}" if existing_notes else notes
+                        updated_count += 1
+                    rows.append(row)
+            
+            # Write back all rows in one operation
+            with open(self.log_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=actual_fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+            
+            return updated_count
+            
+        except Exception as e:
+            print(f"❌ Error batch updating bet results: {e}")
+            return 0
+    
+    # Backward compatibility: delegate to BetRepository
     def get_already_bet_game_ids(self) -> set:
         """Get a set of game IDs (delegates to BetRepository for backward compatibility)."""
         from src.utils.bet_repository import BetRepository

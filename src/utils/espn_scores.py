@@ -148,6 +148,10 @@ class ESPNScoresFetcher:
         self.base_url = "https://site.api.espn.com/apis/site/v2/sports"
         self.serpapi_fallback = serpapi_fallback
         
+        # Rate limiting for ESPN API
+        self.last_request_time = 0
+        self.min_request_interval = 0.05  # 20 requests per second max (conservative)
+        
         # Statistics
         self.stats = {
             'espn_requests': 0,
@@ -187,6 +191,13 @@ class ESPNScoresFetcher:
         except Exception as e:
             print(f"   ⚠️  Cache save error: {e}")
     
+    def _rate_limit(self):
+        """Enforce rate limiting between ESPN API requests."""
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.min_request_interval:
+            time.sleep(self.min_request_interval - elapsed)
+        self.last_request_time = time.time()
+    
     def _fetch_espn_scores(self, sport: str, league: str, date: str) -> Optional[Dict]:
         """
         Fetch scores from ESPN API for a specific sport/league/date.
@@ -209,6 +220,7 @@ class ESPNScoresFetcher:
         params = {'dates': date}
         
         try:
+            self._rate_limit()  # Apply rate limiting
             self.stats['espn_requests'] += 1
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
