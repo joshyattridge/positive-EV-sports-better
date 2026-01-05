@@ -413,7 +413,30 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 2. ROI by EV Range
+            # 2. Bankroll Progression by Bet Number
+            print("✓ Generating: Bankroll Progression by Bet Number")
+            fig, ax = plt.subplots(figsize=(14, 8))
+            df_sorted = df.sort_values('date_placed')
+            initial_bankroll = df_sorted['bankroll'].iloc[0]
+            df_sorted['cumulative_profit'] = df_sorted['actual_profit_loss'].cumsum()
+            df_sorted['actual_bankroll'] = initial_bankroll + df_sorted['cumulative_profit']
+            df_sorted['bet_number'] = range(1, len(df_sorted) + 1)
+            ax.plot(df_sorted['bet_number'], df_sorted['actual_bankroll'], linewidth=2.5, color='steelblue')
+            ax.axhline(y=initial_bankroll, color='gray', linestyle='--', alpha=0.5, linewidth=2, label='Initial Bankroll')
+            ax.fill_between(df_sorted['bet_number'], df_sorted['actual_bankroll'], initial_bankroll, 
+                           where=(df_sorted['actual_bankroll'] >= initial_bankroll), alpha=0.3, color='green', label='Profit')
+            ax.fill_between(df_sorted['bet_number'], df_sorted['actual_bankroll'], initial_bankroll, 
+                           where=(df_sorted['actual_bankroll'] < initial_bankroll), alpha=0.3, color='red', label='Loss')
+            ax.set_title('Bankroll Progression by Bet Number', fontsize=16, fontweight='bold', pad=20)
+            ax.set_xlabel('Bet Number', fontsize=12)
+            ax.set_ylabel('Bankroll ($)', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='best')
+            plt.tight_layout()
+            pdf.savefig(fig, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 3. ROI by EV Range
             print("✓ Generating: ROI by EV Range")
             bins = [0, 5, 10, 15, 20, 25, 30, 100]
             labels = ['0-5%', '5-10%', '10-15%', '15-20%', '20-25%', '25-30%', '30%+']
@@ -438,7 +461,7 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 3. Profit by Sport (Top 20)
+            # 4. Profit by Sport (Top 20)
             print("✓ Generating: Profit by Sport")
             sport_profit = df.groupby('sport')['actual_profit_loss'].sum().sort_values(ascending=False).head(20)
             
@@ -453,7 +476,7 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 4. Profit by Bookmaker
+            # 5. Profit by Bookmaker
             print("✓ Generating: Profit by Bookmaker")
             bookmaker_profit = df.groupby('bookmaker')['actual_profit_loss'].sum().sort_values(ascending=False)
             
@@ -469,7 +492,7 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 5. ROI by Market Type
+            # 6. ROI by Market Type
             print("✓ Generating: ROI by Market Type")
             market_roi = df.groupby('market').apply(
                 lambda x: (x['actual_profit_loss'].sum() / x['recommended_stake'].sum() * 100) if x['recommended_stake'].sum() > 0 else 0
@@ -490,7 +513,7 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 6. Win Rate by Odds Range
+            # 7. Win Rate by Odds Range
             print("✓ Generating: Win Rate by Odds Range")
             bins = [1, 2, 3, 5, 7, 10, 100]
             labels = ['1.0-2.0', '2.0-3.0', '3.0-5.0', '5.0-7.0', '7.0-10.0', '10.0+']
@@ -513,7 +536,7 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 7. EV Distribution
+            # 8. EV Distribution
             print("✓ Generating: EV Distribution")
             fig, ax = plt.subplots(figsize=(14, 8))
             ax.hist(df['ev_percentage'], bins=40, edgecolor='black', alpha=0.7, color='skyblue')
@@ -529,7 +552,7 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 8. Actual vs Expected Profit by Month
+            # 9. Actual vs Expected Profit by Month
             print("✓ Generating: Expected vs Actual Monthly")
             df['month'] = df['date_placed'].dt.to_period('M')
             monthly_comparison = df.groupby('month').agg({
@@ -555,7 +578,7 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 9. Heatmap: Sport vs Market Performance (Top 15 sports)
+            # 10. Heatmap: Sport vs Market Performance (Top 15 sports)
             print("✓ Generating: Sport vs Market Heatmap")
             top_sports = df.groupby('sport')['actual_profit_loss'].sum().abs().nlargest(15).index
             df_filtered = df[df['sport'].isin(top_sports)]
@@ -578,7 +601,7 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 10. Combined Dashboard - Key Metrics
+            # 11. Combined Dashboard - Key Metrics
             print("✓ Generating: Performance Dashboard")
             fig = plt.figure(figsize=(16, 10))
             gs = fig.add_gridspec(3, 3, hspace=0.4, wspace=0.3)
@@ -1023,7 +1046,7 @@ class BacktestAnalyzer:
             d['CreationDate'] = datetime.now()
         
         print(f"\n✓ All visualizations saved to: {pdf_filename}")
-        print(f"  Total pages: 16")
+        print(f"  Total pages: 17")
         print(f"  File size: {pdf_filename.stat().st_size / 1024 / 1024:.2f} MB")
     
     def generate_full_report(self):
