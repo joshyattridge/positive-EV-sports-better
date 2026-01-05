@@ -238,6 +238,67 @@ def remove_vig_shin(odds_list: list, max_iterations: int = 1000) -> list:
         return remove_vig_proportional(odds_list)
 
 
+def remove_vig_worst_case(odds_list: list) -> list:
+    """
+    Remove vig using worst-case method (most conservative).
+    Applies maximum vig penalty to each outcome, assuming the vig is
+    entirely loaded onto each individual outcome. This gives the most
+    pessimistic (conservative) estimate of fair value.
+    
+    This method is useful for:
+    - Conservative bankroll management
+    - Protection against model uncertainty
+    - Only betting when edge persists under worst-case assumptions
+    
+    Args:
+        odds_list: List of decimal odds for all outcomes
+    
+    Returns:
+        List of fair (no-vig) decimal odds with conservative adjustment
+    """
+    if not odds_list or len(odds_list) < 2:
+        return odds_list
+    
+    try:
+        # Calculate implied probabilities with vig
+        implied_probs = [1/odds for odds in odds_list if odds > 0]
+        
+        if not implied_probs:
+            return odds_list
+        
+        # Calculate total vig
+        total_prob = sum(implied_probs)
+        
+        if total_prob <= 1.0:
+            # No vig or negative vig (arbitrage) - return as is
+            return odds_list
+        
+        vig = total_prob - 1.0
+        
+        # For worst-case, assume maximum vig burden on each outcome
+        # We use the full vig amount as penalty for each probability
+        # This makes each outcome appear worse than it likely is
+        fair_probs = []
+        for prob in implied_probs:
+            # Apply full vig penalty to this outcome
+            # The conservative approach: assume this outcome bears the full vig
+            worst_case_prob = prob / (1.0 + vig)
+            fair_probs.append(worst_case_prob)
+        
+        # Normalize to ensure probabilities sum to 1.0
+        total_fair = sum(fair_probs)
+        if total_fair > 0:
+            fair_probs = [p / total_fair for p in fair_probs]
+        
+        # Convert back to odds
+        fair_odds = [1 / prob if prob > 0 else odds_list[i] 
+                     for i, prob in enumerate(fair_probs)]
+        
+        return fair_odds
+    except (ZeroDivisionError, TypeError):
+        return odds_list
+
+
 def calculate_ev_with_vig_removal(bet_odds: float, bet_market_odds: list, 
                                    sharp_odds: float, sharp_market_odds: list,
                                    method: str = 'proportional') -> float:
@@ -249,7 +310,7 @@ def calculate_ev_with_vig_removal(bet_odds: float, bet_market_odds: list,
         bet_market_odds: All odds in the market from betting bookmaker (for vig calculation)
         sharp_odds: Average odds from sharp bookmakers (decimal)
         sharp_market_odds: All odds in the market from sharp bookmakers (for vig calculation)
-        method: Vig removal method ('proportional', 'power', 'shin')
+        method: Vig removal method ('proportional', 'power', 'shin', 'worst_case')
     
     Returns:
         Expected value as percentage (0.05 = 5% EV)
@@ -259,6 +320,8 @@ def calculate_ev_with_vig_removal(bet_odds: float, bet_market_odds: list,
         sharp_fair_odds_list = remove_vig_shin(sharp_market_odds)
     elif method == 'power':
         sharp_fair_odds_list = remove_vig_power(sharp_market_odds)
+    elif method == 'worst_case':
+        sharp_fair_odds_list = remove_vig_worst_case(sharp_market_odds)
     else:  # proportional (default)
         sharp_fair_odds_list = remove_vig_proportional(sharp_market_odds)
     

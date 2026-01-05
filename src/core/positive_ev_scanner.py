@@ -27,7 +27,8 @@ from src.utils.odds_utils import (
     calculate_market_vig,
     remove_vig_proportional,
     remove_vig_power,
-    remove_vig_shin
+    remove_vig_shin,
+    remove_vig_worst_case
 )
 from src.utils.bookmaker_config import BookmakerURLGenerator
 from src.utils.config import BookmakerCredentials
@@ -685,6 +686,8 @@ class PositiveEVScanner:
                                 fair_odds_list = remove_vig_shin(market_odds_list)
                             elif self.vig_removal_method == 'power':
                                 fair_odds_list = remove_vig_power(market_odds_list)
+                            elif self.vig_removal_method == 'worst_case':
+                                fair_odds_list = remove_vig_worst_case(market_odds_list)
                             else:  # proportional (default)
                                 fair_odds_list = remove_vig_proportional(market_odds_list)
                             
@@ -1127,7 +1130,7 @@ def main():
     
     # Display vig adjustment settings
     if scanner.use_vig_adjusted_ev:
-        method_name = scanner.vig_removal_method.capitalize()
+        method_name = scanner.vig_removal_method.replace('_', '-').title()
         print(f"🔬 Vig Adjustment: ENABLED (using {method_name} method)")
     else:
         print(f"🔬 Vig Adjustment: DISABLED (standard method)")
