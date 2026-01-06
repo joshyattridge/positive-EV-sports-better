@@ -872,18 +872,23 @@ class TestEdgeCasesAndBoundaries:
         'SHARP_BOOKS': 'pinnacle',
         'BETTING_BOOKMAKERS': 'bet365',
         'MIN_EV_THRESHOLD': '0.02',
-        'SKIP_ALREADY_BET_GAMES': 'true',
+        'SKIP_ALREADY_BET_OUTCOMES': 'true',
         'BANKROLL': '1000'
     })
-    def test_already_bet_game_filtered(self):
-        """Games with existing bets should be filtered if enabled"""
+    def test_already_bet_outcome_filtered(self):
+        """Outcomes with existing bets should be filtered if enabled"""
         scanner = PositiveEVScanner()
         
-        game_id = 'game12'
-        already_bet_games = {game_id}
+        # Mock the bet repository to return an already-bet outcome
+        from unittest.mock import MagicMock
+        scanner.bet_repository = MagicMock()
+        scanner.bet_repository.get_already_bet_outcomes.return_value = {
+            ('Team L @ Team K', 'h2h', 'Team K')  # game, market, outcome tuple
+        }
+        scanner.bet_repository.get_failed_bet_opportunities.return_value = set()
         
         games = [{
-            'id': game_id,
+            'id': 'game12',
             'home_team': 'Team K',
             'away_team': 'Team L',
             'commence_time': (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
@@ -911,9 +916,9 @@ class TestEdgeCasesAndBoundaries:
             ]
         }]
         
-        opportunities = scanner.analyze_games_for_ev(games, 'test_sport', already_bet_games)
+        opportunities = scanner.analyze_games_for_ev(games, 'test_sport')
         
-        # Should be filtered (already have a bet on this game)
+        # Should be filtered (already have a bet on this outcome)
         assert len(opportunities) == 0
     
     @patch.dict('os.environ', {
@@ -927,7 +932,7 @@ class TestEdgeCasesAndBoundaries:
         """Should handle empty games list gracefully"""
         scanner = PositiveEVScanner()
         
-        opportunities = scanner.analyze_games_for_ev([], 'test_sport', set())
+        opportunities = scanner.analyze_games_for_ev([], 'test_sport')
         
         assert opportunities == []
     

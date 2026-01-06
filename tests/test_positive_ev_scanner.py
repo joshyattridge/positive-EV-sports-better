@@ -313,31 +313,39 @@ class TestFilterOneBetPerGame:
     """Test one bet per game filtering"""
     
     def test_filter_one_bet_per_game_enabled(self):
-        """Test filtering with ONE_BET_PER_GAME enabled"""
+        """Test filtering with ONE_BET_PER_OUTCOME enabled - allows multiple bets per game on different outcomes"""
         with patch.dict('os.environ', {
             'ODDS_API_KEY': 'test',
-            'ONE_BET_PER_GAME': 'true'
+            'ONE_BET_PER_OUTCOME': 'true'  # Updated variable name
         }):
             scanner = PositiveEVScanner()
             
             opps = [
-                {'game': 'Arsenal @ Chelsea', 'ev_percentage': 5.0},
-                {'game': 'Arsenal @ Chelsea', 'ev_percentage': 3.0},
-                {'game': 'Liverpool @ Man Utd', 'ev_percentage': 4.0}
+                # Same outcome (Team A win) in same game - should filter to 1
+                {'game': 'Arsenal @ Chelsea', 'market': 'h2h', 'outcome': 'Arsenal', 'ev_percentage': 5.0},
+                {'game': 'Arsenal @ Chelsea', 'market': 'h2h', 'outcome': 'Arsenal', 'ev_percentage': 3.0},
+                # Different outcome (Over) in same game - should be kept
+                {'game': 'Arsenal @ Chelsea', 'market': 'totals', 'outcome': 'Over 2.5', 'ev_percentage': 4.5},
+                # Different game - should be kept
+                {'game': 'Liverpool @ Man Utd', 'market': 'h2h', 'outcome': 'Liverpool', 'ev_percentage': 4.0}
             ]
             
             filtered = scanner.filter_one_bet_per_game(opps)
             
-            assert len(filtered) == 2
+            # Should keep 3 bets: best Arsenal win + Over + Liverpool
+            assert len(filtered) == 3
             assert filtered[0]['game'] == 'Arsenal @ Chelsea'
+            assert filtered[0]['outcome'] == 'Arsenal'
             assert filtered[0]['ev_percentage'] == 5.0
-            assert filtered[1]['game'] == 'Liverpool @ Man Utd'
+            assert filtered[1]['game'] == 'Arsenal @ Chelsea'
+            assert filtered[1]['outcome'] == 'Over 2.5'
+            assert filtered[2]['game'] == 'Liverpool @ Man Utd'
     
     def test_filter_one_bet_per_game_disabled(self):
-        """Test no filtering when ONE_BET_PER_GAME is disabled"""
+        """Test no filtering when ONE_BET_PER_OUTCOME is disabled"""
         with patch.dict('os.environ', {
             'ODDS_API_KEY': 'test',
-            'ONE_BET_PER_GAME': 'false'
+            'ONE_BET_PER_OUTCOME': 'false'  # Updated variable name
         }):
             scanner = PositiveEVScanner()
             

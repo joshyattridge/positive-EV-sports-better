@@ -151,8 +151,13 @@ class PositiveEVScanner:
         self.sort_order = os.getenv('SORT_ORDER', 'desc').lower()
         
         # Filtering configuration - read from env or use defaults
-        self.one_bet_per_game = os.getenv('ONE_BET_PER_GAME', 'false').lower() == 'true'
-        self.skip_already_bet_games = os.getenv('SKIP_ALREADY_BET_GAMES', 'true').lower() == 'true'
+        # New outcome-based filtering (backwards compatible with old game-based)
+        self.one_bet_per_outcome = os.getenv('ONE_BET_PER_OUTCOME', os.getenv('ONE_BET_PER_GAME', 'false')).lower() == 'true'
+        self.skip_already_bet_outcomes = os.getenv('SKIP_ALREADY_BET_OUTCOMES', os.getenv('SKIP_ALREADY_BET_GAMES', 'true')).lower() == 'true'
+        
+        # Keep old attributes for backwards compatibility
+        self.one_bet_per_game = self.one_bet_per_outcome
+        self.skip_already_bet_games = self.skip_already_bet_outcomes
         self.max_bet_failures = int(os.getenv('MAX_BET_FAILURES', '3'))
         
         # Vig removal configuration - read from env or use defaults
@@ -434,7 +439,6 @@ class PositiveEVScanner:
         return None
     
     def analyze_games_for_ev(self, games: List[Dict], sport: str, 
-                            already_bet_game_ids: Optional[Set[str]] = None,
                             reference_time: Optional[datetime] = None) -> List[Dict]:
         """
         Analyze a list of games for +EV opportunities.
@@ -443,7 +447,6 @@ class PositiveEVScanner:
         Args:
             games: List of games with odds data
             sport: Sport key for context
-            already_bet_game_ids: Set of game IDs to skip (or None to use repository)
             reference_time: Time to use for filtering live games (None = use current time)
             
         Returns:
@@ -454,11 +457,10 @@ class PositiveEVScanner:
         if not games:
             return opportunities
         
-        # Use provided game IDs or fetch from repository
-        if already_bet_game_ids is None:
-            already_bet_game_ids = set()
-            if self.skip_already_bet_games:
-                already_bet_game_ids = self.bet_repository.get_already_bet_game_ids()
+        # Use outcome-based tracking instead of game-based
+        already_bet_outcomes = set()
+        if self.skip_already_bet_outcomes:
+            already_bet_outcomes = self.bet_repository.get_already_bet_outcomes()
         
         # Get failed bet opportunities to ignore (if max_failures > 0)
         failed_opportunities = set()
@@ -469,11 +471,6 @@ class PositiveEVScanner:
         for game in games:
             # Get game ID from API
             game_id = game.get('id', '')
-            
-            # Skip games that already have bets
-            if game_id and game_id in already_bet_game_ids:
-                self._filter_stats['filtered_already_bet'] += 1
-                continue
             
             # Skip live games (use reference_time for backtesting, current time for live)
             commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
@@ -749,6 +746,13 @@ class PositiveEVScanner:
                         if opportunity_key in failed_opportunities:
                             self._filter_stats['filtered_failed_bets'] += 1
                             continue
+                        
+                        # Skip outcomes that have already been bet on
+                        game_string = f"{away_team} @ {home_team}"
+                        outcome_key = (game_string, market_type, outcome_name)
+                        if outcome_key in already_bet_outcomes:
+                            self._filter_stats['filtered_already_bet'] += 1
+                            continue
                             
                         # Calculate bookmaker's implied probability
                         bookmaker_probability = calculate_implied_probability(bet_odds)
@@ -851,13 +855,8 @@ class PositiveEVScanner:
                 logger.warning(f"{sport}: No odds - Error {error_info.get('code', 'unknown')}: {error_info.get('message', 'Unknown error')}")
             return []
         
-        # Get already-bet game IDs if filtering is enabled
-        already_bet_game_ids: Set[str] = set()
-        if self.skip_already_bet_games:
-            already_bet_game_ids = self.bet_repository.get_already_bet_game_ids()
-        
         # Use core analysis method
-        opportunities = self.analyze_games_for_ev(games, sport, already_bet_game_ids)
+        opportunities = self.analyze_games_for_ev(games, sport)
         
         # Log filter stats for this sport
         stats = self.get_filter_stats()
@@ -976,27 +975,37 @@ class PositiveEVScanner:
     
     def filter_one_bet_per_game(self, opportunities: List[Dict]) -> List[Dict]:
         """
-        Filter opportunities to show only the best bet per game.
+        Filter opportunities to show only the best bet per unique outcome.
+        Allows multiple bets per game if they are different outcomes.
+        
+        Examples:
+          - Team A win + Over 200.5 total = ALLOWED (different outcomes)
+          - Team A win + Team A win = BLOCKED (same outcome)
+          - Team A win now + Team B win later = ALLOWED (different outcomes)
         
         Args:
             opportunities: List of opportunities (should already be sorted)
             
         Returns:
-            Filtered list with only one opportunity per game
+            Filtered list with only one opportunity per unique outcome
         """
-        if not self.one_bet_per_game:
+        if not self.one_bet_per_outcome:
             return opportunities
         
         # Track how many we filter out
         original_count = len(opportunities)
         
-        seen_games = set()
+        seen_outcomes = set()
         filtered = []
         
         for opp in opportunities:
-            game_key = opp['game']
-            if game_key not in seen_games:
-                seen_games.add(game_key)
+            # Create unique key from game + market + outcome
+            # This allows: Team A win + Over total (different outcomes in same game)
+            # This blocks: Team A win + Team A win (duplicate outcome)
+            outcome_key = (opp['game'], opp['market'], opp['outcome'])
+            
+            if outcome_key not in seen_outcomes:
+                seen_outcomes.add(outcome_key)
                 filtered.append(opp)
         
         # Track filtered count

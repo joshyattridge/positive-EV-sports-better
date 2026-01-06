@@ -25,9 +25,39 @@ class BetRepository:
         """
         self.log_path = Path(log_path)
     
+    def get_already_bet_outcomes(self) -> Set[tuple]:
+        """
+        Get a set of unique outcomes (game, market, outcome) that already have bets.
+        This allows multiple bets per game on different outcomes.
+        
+        Returns:
+            Set of tuples (game, market, outcome) that have bets in the history
+        """
+        outcomes = set()
+        
+        try:
+            if not self.log_path.exists():
+                return outcomes
+            
+            with open(self.log_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    game = row.get('game', '').strip()
+                    market = row.get('market', '').strip()
+                    outcome = row.get('outcome', '').strip()
+                    # Only add if all fields exist and bet was actually placed
+                    if game and market and outcome and row.get('bet_result') != 'not_placed':
+                        outcomes.add((game, market, outcome))
+            
+        except Exception as e:
+            print(f"⚠️  Error reading bet history for outcomes: {e}")
+        
+        return outcomes
+    
     def get_already_bet_game_ids(self) -> Set[str]:
         """
         Get a set of game IDs that already have bets placed on them.
+        DEPRECATED: Use get_already_bet_outcomes() for better granularity.
         
         Returns:
             Set of game IDs (strings) that have bets in the history

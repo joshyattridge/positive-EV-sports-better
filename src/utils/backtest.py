@@ -76,7 +76,7 @@ class HistoricalBacktester:
         self.bankroll_history = [self.initial_bankroll]
         self.bankroll_timestamps = []
         self.current_bankroll = self.initial_bankroll
-        self.games_bet_on = set()  # Track which games we've already bet on
+        self.outcomes_bet_on = set()  # Track which outcomes we've already bet on (game, market, outcome)
         
         # Monte Carlo tracking
         self.all_simulations = []  # Store all simulation runs
@@ -90,7 +90,7 @@ class HistoricalBacktester:
         self.bankroll_history = [self.initial_bankroll]
         self.bankroll_timestamps = []
         self.current_bankroll = self.initial_bankroll
-        self.games_bet_on = set()
+        self.outcomes_bet_on = set()
         # Reset scanner's Kelly bankroll
         self.scanner.kelly.bankroll = self.initial_bankroll
         # Note: Do NOT reinitialize bet_logger here as it would clear the CSV file
@@ -579,7 +579,6 @@ class HistoricalBacktester:
         opportunities = self.scanner.analyze_games_for_ev(
             games=games,
             sport=sport,
-            already_bet_game_ids=self.games_bet_on,  # Track games bet in this backtest
             reference_time=snapshot_time  # Use snapshot time instead of current time
         )
         
@@ -956,7 +955,7 @@ class HistoricalBacktester:
             print(f"Max Odds: {self.scanner.max_odds:.1f}")
         print(f"Sharp Books: {', '.join(self.scanner.sharp_books)}")
         print(f"Betting Bookmakers: {', '.join(self.scanner.betting_bookmakers)}")
-        print(f"One Bet Per Game: {self.scanner.one_bet_per_game}")
+        print(f"One Bet Per Outcome: {self.scanner.one_bet_per_outcome}")
         print(f"{'='*80}\n")
         
         # Parse dates and make them timezone-aware (UTC) for comparison with API data
@@ -1029,12 +1028,13 @@ class HistoricalBacktester:
                 pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities})
             
             if all_opportunities:
-                # Filter out games we've already bet on
+                # Filter out outcomes we've already bet on
                 new_opportunities = []
                 for opp in all_opportunities:
-                    if opp['game_id'] not in self.games_bet_on:
+                    outcome_key = (opp['game'], opp['market'], opp['outcome'])
+                    if outcome_key not in self.outcomes_bet_on:
                         new_opportunities.append(opp)
-                        self.games_bet_on.add(opp['game_id'])
+                        self.outcomes_bet_on.add(outcome_key)
                 
                 if new_opportunities:
                     total_opportunities += len(new_opportunities)
