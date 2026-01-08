@@ -640,7 +640,12 @@ class BacktestAnalyzer:
             
             # 13. Bet Volume by Hour of Day
             print("✓ Generating: Bet Volume by Hour of Day")
-            df['hour'] = df['date_placed'].dt.hour
+            # Use timestamp instead of date_placed to get the hour
+            if 'timestamp' in df.columns:
+                df['timestamp_dt'] = pd.to_datetime(df['timestamp'])
+                df['hour'] = df['timestamp_dt'].dt.hour
+            else:
+                df['hour'] = df['date_placed'].dt.hour
             
             hour_volume = df['hour'].value_counts().sort_index()
             
