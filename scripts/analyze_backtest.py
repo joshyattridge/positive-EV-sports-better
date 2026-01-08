@@ -578,7 +578,83 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 10. Heatmap: Sport vs Market Performance (Top 15 sports)
+            # 10. Bet Volume by Day of Week
+            print("✓ Generating: Bet Volume by Day of Week")
+            df['day_of_week'] = df['date_placed'].dt.day_name()
+            dow_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            df['day_of_week'] = pd.Categorical(df['day_of_week'], categories=dow_order, ordered=True)
+            
+            dow_volume = df['day_of_week'].value_counts().reindex(dow_order, fill_value=0)
+            
+            fig, ax = plt.subplots(figsize=(14, 8))
+            bars = dow_volume.plot(kind='bar', ax=ax, color='teal', edgecolor='black', linewidth=1.5, alpha=0.8)
+            ax.set_title('Bet Volume by Day of Week', fontsize=16, fontweight='bold', pad=20)
+            ax.set_xlabel('Day of Week', fontsize=12)
+            ax.set_ylabel('Number of Bets', fontsize=12)
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+            # Add value labels on bars
+            for i, v in enumerate(dow_volume.values):
+                ax.text(i, v + max(dow_volume.values)*0.01, str(v), ha='center', va='bottom', fontweight='bold')
+            plt.tight_layout()
+            pdf.savefig(fig, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 11. Bet Volume by Day of Month
+            print("✓ Generating: Bet Volume by Day of Month")
+            df['day_of_month'] = df['date_placed'].dt.day
+            
+            dom_volume = df['day_of_month'].value_counts().sort_index()
+            
+            fig, ax = plt.subplots(figsize=(16, 8))
+            bars = dom_volume.plot(kind='bar', ax=ax, color='purple', edgecolor='black', linewidth=1.5, alpha=0.8)
+            ax.set_title('Bet Volume by Day of Month', fontsize=16, fontweight='bold', pad=20)
+            ax.set_xlabel('Day of Month', fontsize=12)
+            ax.set_ylabel('Number of Bets', fontsize=12)
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=0)
+            plt.tight_layout()
+            pdf.savefig(fig, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 12. Bet Volume by Month of Year
+            print("✓ Generating: Bet Volume by Month of Year")
+            df['month_name'] = df['date_placed'].dt.month_name()
+            month_order = ['January', 'February', 'March', 'April', 'May', 'June', 
+                          'July', 'August', 'September', 'October', 'November', 'December']
+            df['month_name'] = pd.Categorical(df['month_name'], categories=month_order, ordered=True)
+            
+            month_volume = df['month_name'].value_counts().reindex(month_order, fill_value=0)
+            
+            fig, ax = plt.subplots(figsize=(14, 8))
+            bars = month_volume.plot(kind='bar', ax=ax, color='orange', edgecolor='black', linewidth=1.5, alpha=0.8)
+            ax.set_title('Bet Volume by Month of Year', fontsize=16, fontweight='bold', pad=20)
+            ax.set_xlabel('Month', fontsize=12)
+            ax.set_ylabel('Number of Bets', fontsize=12)
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+            # Add value labels on bars
+            for i, v in enumerate(month_volume.values):
+                if v > 0:  # Only show label if there are bets
+                    ax.text(i, v + max(month_volume.values)*0.01, str(v), ha='center', va='bottom', fontweight='bold')
+            plt.tight_layout()
+            pdf.savefig(fig, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 13. Bet Volume by Hour of Day
+            print("✓ Generating: Bet Volume by Hour of Day")
+            df['hour'] = df['date_placed'].dt.hour
+            
+            hour_volume = df['hour'].value_counts().sort_index()
+            
+            fig, ax = plt.subplots(figsize=(16, 8))
+            bars = hour_volume.plot(kind='bar', ax=ax, color='crimson', edgecolor='black', linewidth=1.5, alpha=0.8)
+            ax.set_title('Bet Volume by Hour of Day (24-hour format)', fontsize=16, fontweight='bold', pad=20)
+            ax.set_xlabel('Hour of Day', fontsize=12)
+            ax.set_ylabel('Number of Bets', fontsize=12)
+            ax.set_xticklabels([f'{int(h):02d}:00' for h in hour_volume.index], rotation=45, ha='right')
+            plt.tight_layout()
+            pdf.savefig(fig, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 14. Heatmap: Sport vs Market Performance (Top 15 sports)
             print("✓ Generating: Sport vs Market Heatmap")
             top_sports = df.groupby('sport')['actual_profit_loss'].sum().abs().nlargest(15).index
             df_filtered = df[df['sport'].isin(top_sports)]
@@ -1046,7 +1122,7 @@ class BacktestAnalyzer:
             d['CreationDate'] = datetime.now()
         
         print(f"\n✓ All visualizations saved to: {pdf_filename}")
-        print(f"  Total pages: 17")
+        print(f"  Total pages: 21")
         print(f"  File size: {pdf_filename.stat().st_size / 1024 / 1024:.2f} MB")
     
     def generate_full_report(self):
