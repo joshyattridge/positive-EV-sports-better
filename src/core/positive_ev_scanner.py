@@ -141,10 +141,15 @@ class PositiveEVScanner:
         self._cache_lock = threading.Lock()  # Thread-safe cache access
         
         # Concurrent request settings
-        # 10 concurrent workers - aggressive but safe based on API rate limiting
-        # The API uses burst protection (429 status) rather than hard limits
-        # If you hit 429 errors, the requests module will automatically handle retries
+        # 10 concurrent workers for odds fetching
+        # Use fewer workers for event fetching to avoid rate limits
         self.max_concurrent_requests = 10
+        self.max_concurrent_event_requests = 3  # Lower limit for event endpoint
+        
+        # Rate limiting for API requests
+        self._last_request_time = 0
+        self._min_request_interval = 0.15  # 150ms between requests (≈6.6 req/sec)
+        self._request_lock = threading.Lock()
         
         # Sorting configuration - read from env or use defaults
         self.order_by = os.getenv('ORDER_BY', 'expected_profit').lower()
@@ -212,13 +217,22 @@ class PositiveEVScanner:
             print(f"Error fetching sports: {e}")
             return []
     
-    def get_events(self, sport: str) -> List[Dict]:
+    def _rate_limit(self):
+        """Enforce rate limiting between API requests."""
+        with self._request_lock:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < self._min_request_interval:
+                time.sleep(self._min_request_interval - elapsed)
+            self._last_request_time = time.time()
+    
+    def get_events(self, sport: str, retry_count: int = 3) -> List[Dict]:
         """
         Get list of upcoming events for a sport (FREE - doesn't count against quota).
         Use this to check if events exist before calling get_odds().
         
         Args:
             sport: Sport key (e.g., 'soccer_epl')
+            retry_count: Number of retries for 429 errors
             
         Returns:
             List of events (without odds)
@@ -229,13 +243,35 @@ class PositiveEVScanner:
             'dateFormat': 'iso'
         }
         
-        try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            print(f"Error fetching events for {sport}: {e}")
-            return []
+        for attempt in range(retry_count):
+            try:
+                # Apply rate limiting
+                self._rate_limit()
+                
+                response = requests.get(url, params=params, timeout=10)
+                response.raise_for_status()
+                return response.json()
+                
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and e.response.status_code == 429:
+                    # Rate limit hit - wait and retry with exponential backoff
+                    if attempt < retry_count - 1:
+                        wait_time = (2 ** attempt) * 1.0  # 1s, 2s, 4s
+                        logger.warning(f"Rate limit hit for {sport}, waiting {wait_time}s before retry {attempt + 1}/{retry_count}")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"Rate limit exceeded for {sport} after {retry_count} attempts")
+                        print(f"Error fetching events for {sport}: {e}")
+                        return []
+                else:
+                    print(f"Error fetching events for {sport}: {e}")
+                    return []
+            except Exception as e:
+                print(f"Error fetching events for {sport}: {e}")
+                return []
+        
+        return []
     
     def get_odds(self, sport: str, markets: str = 'h2h') -> List[Dict]:
         """
@@ -865,12 +901,13 @@ class PositiveEVScanner:
         
         return opportunities
     
-    def scan_all_sports(self, sport_keys: Optional[List[str]] = None) -> Dict[str, List[Dict]]:
+    def scan_all_sports(self, sport_keys: Optional[List[str]] = None, max_workers: Optional[int] = None) -> Dict[str, List[Dict]]:
         """
         Scan multiple sports for +EV opportunities using concurrent requests.
         
         Args:
             sport_keys: List of sport keys to scan, or None to read from env
+            max_workers: Max concurrent workers for event fetching (default: 3)
             
         Returns:
             Dictionary mapping sport to list of opportunities
@@ -880,10 +917,15 @@ class PositiveEVScanner:
             betting_sports_str = os.getenv('BETTING_SPORTS', 'soccer_epl,soccer_england_championship,soccer_spain_la_liga,soccer_germany_bundesliga,soccer_italy_serie_a,soccer_france_ligue_one,soccer_uefa_champs_league,soccer_uefa_europa_league')
             sport_keys = [sport.strip() for sport in betting_sports_str.split(',')]
         
+        # Use provided max_workers or default to conservative value
+        if max_workers is None:
+            max_workers = self.max_concurrent_event_requests
+        
         # First, filter to only sports with active events (FREE API call, doesn't count against quota)
+        # Use lower concurrency to avoid rate limiting on event endpoint
         active_sports = []
         
-        with ThreadPoolExecutor(max_workers=self.max_concurrent_requests) as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_sport = {
                 executor.submit(self.get_events, sport): sport 
                 for sport in sport_keys
