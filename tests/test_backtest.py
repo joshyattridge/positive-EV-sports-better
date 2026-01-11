@@ -24,7 +24,7 @@ def backtester():
         'BETTING_BOOKMAKERS': 'bet365',
         'ONE_BET_PER_GAME': 'true'
     }):
-        return HistoricalBacktester()
+        return HistoricalBacktester(test_mode=True)
 
 
 class TestBacktesterInitialization:
@@ -43,7 +43,7 @@ class TestBacktesterInitialization:
         """Test initialization fails without API key"""
         with patch.dict('os.environ', {}, clear=True):
             with pytest.raises(ValueError, match='ODDS_API_KEY'):
-                HistoricalBacktester()
+                HistoricalBacktester(test_mode=True)
     
     def test_initialization_sets_defaults(self, backtester):
         """Test that defaults are properly set"""
@@ -363,7 +363,7 @@ class TestEdgeCases:
             'ODDS_API_KEY': 'test',
             'BANKROLL': '1000000'
         }):
-            backtester = HistoricalBacktester()
+            backtester = HistoricalBacktester(test_mode=True)
             assert backtester.initial_bankroll == 1000000
     
     def test_very_small_bankroll(self):
@@ -372,7 +372,7 @@ class TestEdgeCases:
             'ODDS_API_KEY': 'test',
             'BANKROLL': '10'
         }):
-            backtester = HistoricalBacktester()
+            backtester = HistoricalBacktester(test_mode=True)
             assert backtester.initial_bankroll == 10
     
     def test_zero_kelly_fraction(self):
@@ -381,5 +381,5 @@ class TestEdgeCases:
             'ODDS_API_KEY': 'test',
             'KELLY_FRACTION': '0'
         }):
-            backtester = HistoricalBacktester()
+            backtester = HistoricalBacktester(test_mode=True)
             assert backtester.scanner.kelly_fraction == 0

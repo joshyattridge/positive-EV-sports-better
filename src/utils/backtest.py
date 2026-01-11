@@ -36,8 +36,13 @@ class HistoricalBacktester:
     Backtest betting strategy using historical odds data.
     """
     
-    def __init__(self):
-        """Initialize backtester with scanner."""
+    def __init__(self, test_mode: bool = False):
+        """
+        Initialize backtester with scanner.
+        
+        Args:
+            test_mode: If True, uses test file for bet logging (prevents tests from writing to production files)
+        """
         self.api_key = os.getenv('ODDS_API_KEY')
         if not self.api_key:
             raise ValueError("ODDS_API_KEY must be set in .env file")
@@ -69,7 +74,8 @@ class HistoricalBacktester:
         self.initial_bankroll = self.scanner.kelly.bankroll
         
         # Initialize bet logger for CSV recording (reset=True creates fresh file for each backtest)
-        self.bet_logger = BetLogger(log_path="data/backtest_bet_history.csv", reset=True)
+        # In test mode, uses a separate test file to prevent overwriting production data
+        self.bet_logger = BetLogger(log_path="data/backtest_bet_history.csv", test_mode=test_mode, reset=True)
         
         # Track results
         self.bets_placed = []
