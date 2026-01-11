@@ -148,14 +148,14 @@ class TestGenerateBookmakerLink:
     """Test bookmaker link generation"""
     
     def test_generate_link_williamhill(self, scanner):
-        """Test William Hill link generation"""
+        """Test William Hill link generation - now uses Google search fallback"""
         link = scanner.generate_bookmaker_link(
             'williamhill',
             'soccer_epl',
             'Arsenal',
             'Chelsea'
         )
-        assert 'williamhill.com' in link
+        assert 'google.com' in link or 'williamhill' in link
         assert 'Chelsea' in link or 'Arsenal' in link
     
     def test_generate_link_bet365(self, scanner):
