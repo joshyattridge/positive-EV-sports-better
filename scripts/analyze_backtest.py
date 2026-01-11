@@ -436,7 +436,44 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
-            # 3. ROI by EV Range
+            # 3. Drawdown Percentage Over Time
+            print("✓ Generating: Drawdown Percentage Over Time")
+            fig, ax = plt.subplots(figsize=(14, 8))
+            df_sorted = df.sort_values('date_placed')
+            initial_bankroll = df_sorted['bankroll'].iloc[0]
+            df_sorted['cumulative_profit'] = df_sorted['actual_profit_loss'].cumsum()
+            df_sorted['actual_bankroll'] = initial_bankroll + df_sorted['cumulative_profit']
+            
+            # Calculate running maximum (peak) and drawdown
+            df_sorted['running_max'] = df_sorted['actual_bankroll'].cummax()
+            df_sorted['drawdown_pct'] = ((df_sorted['actual_bankroll'] - df_sorted['running_max']) / df_sorted['running_max'] * 100)
+            
+            ax.fill_between(df_sorted['date_placed'], df_sorted['drawdown_pct'], 0, 
+                           alpha=0.4, color='red', label='Drawdown')
+            ax.plot(df_sorted['date_placed'], df_sorted['drawdown_pct'], linewidth=2.5, color='darkred')
+            ax.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
+            
+            # Add max drawdown annotation
+            max_drawdown = df_sorted['drawdown_pct'].min()
+            max_drawdown_date = df_sorted.loc[df_sorted['drawdown_pct'].idxmin(), 'date_placed']
+            ax.annotate(f'Max Drawdown: {max_drawdown:.2f}%',
+                       xy=(max_drawdown_date, max_drawdown),
+                       xytext=(10, -30), textcoords='offset points',
+                       bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.7),
+                       arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'),
+                       fontsize=11, fontweight='bold')
+            
+            ax.set_title('Drawdown Percentage Over Time', fontsize=16, fontweight='bold', pad=20)
+            ax.set_xlabel('Date', fontsize=12)
+            ax.set_ylabel('Drawdown (%)', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='best')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            pdf.savefig(fig, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # 4. ROI by EV Range
             print("✓ Generating: ROI by EV Range")
             bins = [0, 5, 10, 15, 20, 25, 30, 100]
             labels = ['0-5%', '5-10%', '10-15%', '15-20%', '20-25%', '25-30%', '30%+']
@@ -1127,7 +1164,7 @@ class BacktestAnalyzer:
             d['CreationDate'] = datetime.now()
         
         print(f"\n✓ All visualizations saved to: {pdf_filename}")
-        print(f"  Total pages: 21")
+        print(f"  Total pages: 22")
         print(f"  File size: {pdf_filename.stat().st_size / 1024 / 1024:.2f} MB")
     
     def generate_full_report(self):
