@@ -305,7 +305,8 @@ class PositiveEVScanner:
             'bookmakers': ','.join(self.optimized_bookmakers),
             'markets': markets,
             'oddsFormat': self.odds_format,
-            'dateFormat': 'iso'
+            'dateFormat': 'iso',
+            'includeLinks': 'true'  # Request bookmaker links for betslips
         }
         
         try:
@@ -838,12 +839,15 @@ class PositiveEVScanner:
                         # Generate bookmaker URL - use API link if available, otherwise generate
                         bookmaker_url = odds_data.get('link')
                         if not bookmaker_url:
+                            logger.debug(f"No API link for {odds_data['title']} on {game} - {outcome_name}, using Google search fallback")
                             bookmaker_url = self.generate_bookmaker_link(
                                 odds_data['bookmaker'], 
                                 sport, 
                                 home_team, 
                                 away_team
                             )
+                        else:
+                            logger.debug(f"Using API link for {odds_data['title']}: {bookmaker_url}")
                         
                         opportunities.append({
                             'game_id': game_id,
