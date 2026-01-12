@@ -15,6 +15,113 @@ This project helps identify sports betting opportunities with positive expected 
 - � **Kelly Criterion Bankroll Management**: Optimal bet sizing using 100% Kelly Criterion
 - �📈 Track betting performance
 
+## The Odds API Pricing & Cost Optimization
+
+This project uses [The Odds API](https://the-odds-api.com/) to fetch live sports betting odds. Understanding the pricing model is crucial for optimizing your costs.
+
+### Pricing Model
+
+The Odds API charges based on **requests** and **regions**:
+
+- **1 API call = 1 credit per sport** (for a single region and market)
+- **Multiple markets** multiply the cost (e.g., 2 markets = 2× credits)
+- **Bookmakers vs Regions**:
+  - **1-10 bookmakers** = 1 region equivalent
+  - **11-20 bookmakers** = 2 regions equivalent
+  - **21-30 bookmakers** = 3 regions equivalent
+  - **regions=uk** (gives 18-20 bookmakers) = 1 region equivalent
+  - **regions=us** (gives 20-30 bookmakers) = 1 region equivalent
+
+### Cost Calculation Example
+
+If you scan with the default configuration:
+- **143 sports** configured in BETTING_SPORTS
+- **2 markets** (h2h, totals)
+- **15 specific bookmakers** (11-20 range = 2 regions)
+
+**Cost per scan:**
+- Only ~30-50 sports have active events at any time
+- Each sport costs: 2 markets × 2 regions = **4 credits**
+- **Total: ~120-200 credits per scan**
+
+### **IMPORTANT: Optimize Your Bookmaker Configuration**
+
+To minimize API costs, **round your total bookmaker count to the nearest 10** (including sharp bookmakers):
+
+#### ✅ Optimal Configurations:
+
+- **10 bookmakers total** (sharp + betting books) = 1 region = **cheapest**
+- **20 bookmakers total** = 2 regions
+- **30 bookmakers total** = 3 regions
+
+#### ❌ Wasteful Configurations:
+
+- **11 bookmakers** = 2 regions (same cost as 20!)
+- **15 bookmakers** = 2 regions (you're paying for 20 but only getting 15)
+- **21 bookmakers** = 3 regions (same cost as 30!)
+
+### Recommended Setup
+
+**For UK bettors (BEST VALUE):**
+```bash
+# .env configuration
+SHARP_BOOKS=betfair_ex_uk,matchbook,smarkets  # 3 sharp books
+# Configure 7 betting bookmaker credentials for total of 10
+
+# OR use regions for even better value:
+# Use regions=uk in the code (gives you 18-20 bookmakers for 1 region cost)
+```
+
+**For 20 bookmakers:**
+```bash
+SHARP_BOOKS=pinnacle,betfair_ex_uk,matchbook  # 3 sharp books
+# Configure 17 betting bookmaker credentials for total of 20
+```
+
+### Cost Reduction Strategies
+
+1. **Use regions instead of specific bookmakers** (recommended for UK/US):
+   - `regions=uk` gives you 18-20 UK bookmakers for 1 region cost
+   - More bookmakers than 10-15 specific ones, but half the cost!
+
+2. **Increase cache duration** (in positive_ev_scanner.py):
+   - Default: 60 seconds
+   - Recommended: 300-900 seconds (5-15 minutes)
+   - Reduces API calls if you scan frequently
+
+3. **Focus on fewer sports**:
+   - Edit BETTING_SPORTS to only include leagues you bet on
+   - Reduces total API calls per scan
+
+4. **Count your bookmakers**:
+   - Count SHARP_BOOKS + configured betting bookmaker credentials
+   - Round to 10, 20, or 30 to avoid wasting credits
+   - Don't use 11-19 bookmakers (you pay for 20 anyway!)
+
+### Current API Usage
+
+Check your current usage:
+```bash
+# This command will show your remaining credits
+./run.sh scan
+# Look for: "Odds API Usage: X requests used, Y requests remaining"
+```
+
+### Example Cost Savings
+
+**Before optimization:**
+- 15 bookmakers × 2 markets = 4 credits per sport
+- 50 active sports = 200 credits per scan
+- 500 scans per month = 100,000 credits
+
+**After optimization (using regions=uk):**
+- regions=uk × 2 markets = 2 credits per sport
+- 50 active sports = 100 credits per scan
+- 500 scans per month = 50,000 credits
+- **Savings: 50%** 💰
+
+---
+
 ## Browser Automation
 
 The project includes a powerful browser automation tool (`browser_automation.py`) that uses:
