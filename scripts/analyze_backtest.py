@@ -373,6 +373,53 @@ class BacktestAnalyzer:
         
         return kelly_analysis
     
+    def analyze_by_time_to_commence(self):
+        """Analyze performance by time between bet placement and game commence time."""
+        print(f"\n{'='*80}")
+        print("ANALYSIS BY TIME-TO-COMMENCE (HOURLY)")
+        print(f"{'='*80}\n")
+        
+        df = self.settled_df.copy()
+        
+        # Ensure both datetime columns have the same timezone
+        # Convert date_placed to UTC to match commence_time
+        if df['date_placed'].dt.tz is None:
+            df['date_placed'] = df['date_placed'].dt.tz_localize('UTC')
+        
+        # Calculate time difference in hours
+        df['time_to_commence_hours'] = (df['commence_time'] - df['date_placed']).dt.total_seconds() / 3600
+        
+        # Round to nearest hour for grouping
+        df['hours_before'] = df['time_to_commence_hours'].round(0).astype(int)
+        
+        # Filter to reasonable range (0-168 hours = 1 week)
+        df_filtered = df[df['hours_before'].between(0, 168)].copy()
+        
+        time_analysis = df_filtered.groupby('hours_before').agg({
+            'recommended_stake': ['count', 'sum'],
+            'actual_profit_loss': 'sum',
+            'bet_result': lambda x: (x == 'win').sum(),
+            'ev_percentage': 'mean',
+            'bet_odds': 'mean'
+        }).round(2)
+        
+        time_analysis.columns = ['Bet Count', 'Total Staked', 'Profit/Loss', 'Wins', 'Avg EV%', 'Avg Odds']
+        time_analysis['ROI%'] = (time_analysis['Profit/Loss'] / time_analysis['Total Staked'] * 100).round(2)
+        time_analysis['Win Rate%'] = (time_analysis['Wins'] / time_analysis['Bet Count'] * 100).round(2)
+        
+        # Only show hours with bets
+        time_analysis = time_analysis[time_analysis['Bet Count'] > 0]
+        
+        print(time_analysis.head(20))
+        if len(time_analysis) > 20:
+            print(f"\n... ({len(time_analysis) - 20} more hours with bets)")
+        
+        print(f"\nBest ROI Hour: {time_analysis['ROI%'].idxmax()} hours before ({time_analysis['ROI%'].max():.2f}%)")
+        print(f"Worst ROI Hour: {time_analysis['ROI%'].idxmin()} hours before ({time_analysis['ROI%'].min():.2f}%)")
+        print(f"\nTotal hours with data: {len(time_analysis)}")
+        
+        return time_analysis
+    
     def create_visualizations(self):
         """Create comprehensive visualizations in a single PDF."""
         print(f"\n{'='*80}")
@@ -1155,6 +1202,85 @@ class BacktestAnalyzer:
             pdf.savefig(fig, dpi=300, bbox_inches='tight')
             plt.close()
             
+            # 23. ROI by Time-to-Commence (Hourly)
+            print("✓ Generating: ROI by Time-to-Commence (Hourly)")
+            df_time = df.copy()
+            
+            # Ensure both datetime columns have the same timezone
+            if df_time['date_placed'].dt.tz is None:
+                df_time['date_placed'] = df_time['date_placed'].dt.tz_localize('UTC')
+            
+            df_time['time_to_commence_hours'] = (df_time['commence_time'] - df_time['date_placed']).dt.total_seconds() / 3600
+            
+            # Round to nearest hour
+            df_time['hours_before'] = df_time['time_to_commence_hours'].round(0).astype(int)
+            
+            # Filter to reasonable range (0-168 hours = 1 week)
+            df_time = df_time[df_time['hours_before'].between(0, 168)]
+            
+            # Calculate ROI and counts for each hour
+            hourly_data = df_time.groupby('hours_before').agg({
+                'actual_profit_loss': 'sum',
+                'recommended_stake': ['sum', 'count']
+            })
+            
+            hourly_data.columns = ['profit', 'stake', 'count']
+            hourly_data['roi'] = (hourly_data['profit'] / hourly_data['stake'] * 100).fillna(0)
+            
+            # Only keep hours with bets
+            hourly_data = hourly_data[hourly_data['count'] > 0]
+            
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 14))
+            
+            # ROI line chart
+            colors = ['green' if x > 0 else 'red' for x in hourly_data['roi'].values]
+            ax1.scatter(hourly_data.index, hourly_data['roi'], c=colors, s=100, alpha=0.6, edgecolors='black', linewidth=1)
+            ax1.plot(hourly_data.index, hourly_data['roi'], linewidth=1.5, color='steelblue', alpha=0.5)
+            ax1.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
+            ax1.set_title('ROI by Hours Before Game Commence', fontsize=16, fontweight='bold', pad=20)
+            ax1.set_xlabel('Hours Before Game Start', fontsize=12)
+            ax1.set_ylabel('ROI (%)', fontsize=12)
+            ax1.grid(True, alpha=0.3)
+            
+            # Add trend line if scipy is available
+            try:
+                from scipy import stats
+                if len(hourly_data) > 1:
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(hourly_data.index, hourly_data['roi'])
+                    trend_line = slope * hourly_data.index + intercept
+                    ax1.plot(hourly_data.index, trend_line, 'r--', linewidth=2, alpha=0.7, 
+                            label=f'Trend (R²={r_value**2:.3f})')
+                    ax1.legend()
+            except ImportError:
+                pass
+            
+            # Bet count bar chart
+            ax2.bar(hourly_data.index, hourly_data['count'], color='steelblue', edgecolor='black', linewidth=1, alpha=0.7)
+            ax2.set_title('Number of Bets by Hours Before Game Commence', fontsize=16, fontweight='bold', pad=20)
+            ax2.set_xlabel('Hours Before Game Start', fontsize=12)
+            ax2.set_ylabel('Number of Bets', fontsize=12)
+            ax2.grid(True, alpha=0.3, axis='y')
+            
+            # Cumulative profit chart
+            hourly_data_sorted = hourly_data.sort_index()
+            hourly_data_sorted['cumulative_profit'] = hourly_data_sorted['profit'].cumsum()
+            ax3.plot(hourly_data_sorted.index, hourly_data_sorted['cumulative_profit'], 
+                    linewidth=2.5, color='steelblue', marker='o', markersize=4)
+            ax3.fill_between(hourly_data_sorted.index, hourly_data_sorted['cumulative_profit'], 0,
+                           where=(hourly_data_sorted['cumulative_profit'] >= 0), alpha=0.3, color='green', label='Cumulative Profit')
+            ax3.fill_between(hourly_data_sorted.index, hourly_data_sorted['cumulative_profit'], 0,
+                           where=(hourly_data_sorted['cumulative_profit'] < 0), alpha=0.3, color='red', label='Cumulative Loss')
+            ax3.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
+            ax3.set_title('Cumulative Profit by Hours Before Game Commence', fontsize=16, fontweight='bold', pad=20)
+            ax3.set_xlabel('Hours Before Game Start', fontsize=12)
+            ax3.set_ylabel('Cumulative Profit ($)', fontsize=12)
+            ax3.grid(True, alpha=0.3)
+            ax3.legend()
+            
+            plt.tight_layout()
+            pdf.savefig(fig, dpi=300, bbox_inches='tight')
+            plt.close()
+            
             # Add metadata to PDF
             d = pdf.infodict()
             d['Title'] = 'Backtest Analysis Report'
@@ -1164,7 +1290,7 @@ class BacktestAnalyzer:
             d['CreationDate'] = datetime.now()
         
         print(f"\n✓ All visualizations saved to: {pdf_filename}")
-        print(f"  Total pages: 22")
+        print(f"  Total pages: 23")
         print(f"  File size: {pdf_filename.stat().st_size / 1024 / 1024:.2f} MB")
     
     def generate_full_report(self):
@@ -1185,6 +1311,7 @@ class BacktestAnalyzer:
         self.analyze_by_stake_size()
         self.analyze_time_patterns()
         self.analyze_kelly_performance()
+        self.analyze_by_time_to_commence()
         
         # Generate visualizations
         self.create_visualizations()
