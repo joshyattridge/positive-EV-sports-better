@@ -1,94 +1,77 @@
 """
 Historical Backtesting Tool
 
-Backtests your positive EV betting strategy using real historical odds data
-from The Odds API. This validates your simulator parameters and shows actual
-performance with your exact strategy.
+Simplified backtest using requests-cache for automatic HTTP caching.
+Backtests your positive EV betting strategy using real historical odds data.
 """
 
 import os
 import requests
-from datetime import datetime, timedelta
+import requests_cache
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
 import json
-import time
-import hashlib
-import csv
 from pathlib import Path
 from src.core.positive_ev_scanner import PositiveEVScanner
-from src.utils.odds_utils import calculate_implied_probability, calculate_ev
 from src.utils.google_search_scraper import GoogleSearchScraper
 from src.utils.espn_scores import ESPNScoresFetcher
 from src.utils.bet_settler import BetSettler
 from src.utils.bet_logger import BetLogger
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 load_dotenv()
 
+# Install requests-cache for transparent HTTP caching
+requests_cache.install_cache(
+    'data/backtest_cache/api_cache',
+    backend='sqlite',
+    expire_after=None  # Never expire for historical data
+)
+
 
 class HistoricalBacktester:
-    """
-    Backtest betting strategy using historical odds data.
-    """
+    """Backtest betting strategy using historical odds data."""
     
     def __init__(self, test_mode: bool = False):
-        """
-        Initialize backtester with scanner.
-        
-        Args:
-            test_mode: If True, uses test file for bet logging (prevents tests from writing to production files)
-        """
+        """Initialize backtester with scanner."""
         self.api_key = os.getenv('ODDS_API_KEY')
         if not self.api_key:
             raise ValueError("ODDS_API_KEY must be set in .env file")
         
         self.base_url = "https://api.the-odds-api.com/v4"
         
-        # Create cache directory
-        self.cache_dir = Path('data/backtest_cache')
-        self.cache_dir.mkdir(exist_ok=True)
-        
-        # Initialize scanner (reads all parameters from .env)
+        # Initialize scanner
         self.scanner = PositiveEVScanner(api_key=self.api_key)
         
-        # Initialize ESPN + SerpAPI for real results (always enabled)
-        self.google_scraper = None
-        self.espn_scraper = None
+        # Initialize ESPN + SerpAPI for real results
         try:
-            # Initialize SerpAPI for fallback
             self.google_scraper = GoogleSearchScraper()
-            # Initialize ESPN with SerpAPI fallback
             self.espn_scraper = ESPNScoresFetcher(serpapi_fallback=self.google_scraper)
-            print(f"✅ ESPN API enabled for real game results (with SerpAPI fallback)")
+            print("✅ ESPN API enabled for real game results")
         except ValueError as e:
             print(f"⚠️  ESPN/SerpAPI not configured: {e}")
-            print(f"   Settlement will not be available")
             raise
         
-        # Store initial bankroll for resets
+        # Store initial bankroll
         self.initial_bankroll = self.scanner.kelly.bankroll
         
-        # Initialize bet logger for CSV recording (reset=True creates fresh file for each backtest)
-        # In test mode, uses a separate test file to prevent overwriting production data
-        self.bet_logger = BetLogger(log_path="data/backtest_bet_history.csv", test_mode=test_mode, reset=True)
+        # Initialize bet logger
+        self.bet_logger = BetLogger(
+            log_path="data/backtest_bet_history.csv", 
+            test_mode=test_mode, 
+            reset=True
+        )
         
         # Track results
         self.bets_placed = []
         self.bankroll_history = [self.initial_bankroll]
         self.bankroll_timestamps = []
         self.current_bankroll = self.initial_bankroll
-        self.outcomes_bet_on = set()  # Track which outcomes we've already bet on (game, market, outcome)
-        
-        # Monte Carlo tracking
-        self.all_simulations = []  # Store all simulation runs
-        
-        # In-memory cache for fast lookups
-        self.memory_cache = {}  # Will be populated by preload_cache()
+        self.outcomes_bet_on = set()
+        self.game_results_cache = {}
         
     def reset_state(self):
         """Reset backtester state for new run."""
@@ -97,373 +80,35 @@ class HistoricalBacktester:
         self.bankroll_timestamps = []
         self.current_bankroll = self.initial_bankroll
         self.outcomes_bet_on = set()
-        # Reset scanner's Kelly bankroll
+        self.game_results_cache = {}
         self.scanner.kelly.bankroll = self.initial_bankroll
-        # Note: Do NOT reinitialize bet_logger here as it would clear the CSV file
     
-    def _parse_timestamp(self, ts: str):
-        """Parse timestamp string in various formats, always returning timezone-aware datetime."""
-        from datetime import datetime, timezone
-        
-        # Try ISO format with Z
+    def _parse_timestamp(self, ts: str) -> datetime:
+        """Parse timestamp string to timezone-aware datetime."""
         if 'Z' in ts:
             return datetime.fromisoformat(ts.replace('Z', '+00:00'))
-        
-        # Try format with UTC suffix
         if ' UTC' in ts:
             dt = datetime.strptime(ts.replace(' UTC', ''), '%Y-%m-%d %H:%M')
             return dt.replace(tzinfo=timezone.utc)
-        
-        # Try plain ISO format
         try:
             dt = datetime.fromisoformat(ts)
-            # Make timezone-aware if naive
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt
         except:
-            # Last resort: try parsing as datetime string
             dt = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
             return dt.replace(tzinfo=timezone.utc)
-        
-    def _get_cache_key(self, sport: str, date: str, markets: str) -> str:
-        """Generate a cache key for the API request."""
-        key_str = f"{sport}_{date}_{markets}"
-        return hashlib.md5(key_str.encode()).hexdigest()
     
-    def _load_from_cache(self, cache_key: str) -> Optional[Dict]:
-        """Load data from cache if it exists (checks memory first, then disk).
-        
-        Returns:
-            - Dict: Data exists
-            - None: Cache miss (not in cache)
-            
-        Note: Data cached as None (404) is treated as cache miss but won't trigger API retry.
+    def get_historical_odds(self, sport: str, date: str) -> Optional[Dict]:
         """
-        # Check in-memory cache first
-        if cache_key in self.memory_cache:
-            return self.memory_cache[cache_key]
-        
-        # Fall back to disk if not in memory
-        cache_file = self.cache_dir / f"{cache_key}.json"
-        if cache_file.exists():
-            try:
-                with open(cache_file, 'r') as f:
-                    data = json.load(f)
-                    # Only cache in memory if data exists (skip 404s)
-                    if data is not None:
-                        self.memory_cache[cache_key] = data
-                    return data
-            except Exception as e:
-                print(f"  Warning: Failed to load cache: {e}")
-                return None
-        return None
-    
-    def _save_to_cache(self, cache_key: str, data: Dict):
-        """Save data to cache."""
-        cache_file = self.cache_dir / f"{cache_key}.json"
-        try:
-            with open(cache_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            # Also store in memory cache
-            self.memory_cache[cache_key] = data
-        except Exception as e:
-            print(f"  Warning: Failed to save cache: {e}")
-    
-    def preload_cache(self, sports: Optional[List[str]] = None, timestamps: Optional[List[str]] = None):
-        """Pre-load cache files into memory for fast access.
-        
-        Args:
-            sports: List of sport keys to preload (if None, loads all)
-            timestamps: List of timestamps to preload (if None, loads all)
+        Get historical odds for a specific date.
+        Uses requests-cache for automatic caching.
         """
-        # If no filters provided, load everything
-        if sports is None or timestamps is None:
-            cache_files = list(self.cache_dir.glob('*.json'))
-            if not cache_files:
-                return
-            
-            print(f"\n🔄 Pre-loading all {len(cache_files)} cache files into memory...")
-            start_time = time.time()
-            
-            loaded = 0
-            for cache_file in cache_files:
-                try:
-                    cache_key = cache_file.stem
-                    with open(cache_file, 'r') as f:
-                        self.memory_cache[cache_key] = json.load(f)
-                    loaded += 1
-                except Exception as e:
-                    print(f"  Warning: Failed to load {cache_file.name}: {e}")
-            
-            elapsed = time.time() - start_time
-            print(f"✅ Pre-loaded {loaded} cache files in {elapsed:.2f}s")
-            print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
-            return
-        
-        # Generate list of needed cache keys with their metadata
-        needed_data = []
-        to_fetch = []  # Items that need API calls
-        
-        print(f"\n🔄 Pre-loading {len(sports) * len(timestamps)} cache files for date range...\n")
-        start_time = time.time()
-        
-        loaded_from_cache = 0
-        failed = 0
-        
-        # First pass: load from cache synchronously (fast)
-        print("Phase 1: Loading from disk cache...")
-        for sport in sports:
-            for timestamp in timestamps:
-                cache_key = self._get_cache_key(sport, timestamp, 'h2h')
-                cache_file = self.cache_dir / f"{cache_key}.json"
-                
-                if cache_file.exists():
-                    try:
-                        with open(cache_file, 'r') as f:
-                            data = json.load(f)
-                            # Skip None entries (404s - data doesn't exist)
-                            if data is not None:
-                                self.memory_cache[cache_key] = data
-                                loaded_from_cache += 1
-                            # else: skip 404s, don't add to to_fetch
-                    except Exception as e:
-                        failed += 1
-                else:
-                    # Mark for API fetching
-                    to_fetch.append((cache_key, sport, timestamp))
-        
-        print(f"   Loaded {loaded_from_cache} files from cache")
-        
-        if not to_fetch:
-            elapsed = time.time() - start_time
-            print(f"\n✅ Pre-loaded {loaded_from_cache} files in {elapsed:.2f}s (all from cache)")
-            print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
-            return
-        
-        # Second pass: fetch missing data from API in parallel
-        print(f"\nPhase 2: Fetching {len(to_fetch)} missing files from API...")
-        fetched_from_api = 0
-        
-        # Rate limiter: track API call timing and errors
-        rate_limiter = {'last_call': time.time(), 'lock': threading.Lock()}
-        min_interval = 0.02  # 50 requests per second max
-        error_summary = {}  # Track error types
-        error_lock = threading.Lock()
-        
-        def fetch_one(cache_key, sport, timestamp):
-            """Fetch a single historical odds snapshot with rate limiting."""
-            nonlocal fetched_from_api, failed
-            
-            # Rate limit: ensure minimum time between API calls
-            with rate_limiter['lock']:
-                elapsed = time.time() - rate_limiter['last_call']
-                if elapsed < min_interval:
-                    time.sleep(min_interval - elapsed)
-                rate_limiter['last_call'] = time.time()
-            
-            try:
-                url = f"{self.base_url}/historical/sports/{sport}/odds"
-                params = {
-                    'apiKey': self.api_key,
-                    'bookmakers': ','.join(self.scanner.optimized_bookmakers),
-                    'markets': self.scanner.markets,
-                    'oddsFormat': self.scanner.odds_format,
-                    'date': timestamp
-                }
-                
-                response = requests.get(url, params=params, timeout=10)
-                response.raise_for_status()
-                data = response.json()
-                
-                # Save to cache and memory (thread-safe)
-                self._save_to_cache(cache_key, data)
-                return True
-                
-            except requests.exceptions.HTTPError as e:
-                # Track error types
-                status_code = e.response.status_code if e.response is not None else 'unknown'
-                error_type = f"HTTPError_{status_code}"
-
-                # if rate limit exceeded print
-                if status_code == 429:
-                    print("  ⚠️  Rate limit exceeded. Consider slowing down requests.")
-                
-                # Handle 422 by trying individual markets (like live scanner)
-                if status_code == 422:
-                    market_list = [m.strip() for m in self.scanner.markets.split(',')]
-                    if len(market_list) > 1:
-                        # Try each market individually
-                        combined_data = {'data': []}
-                        game_dict = {}  # Track games by ID to merge data
-                        success_count = 0
-                        
-                        for market in market_list:
-                            try:
-                                params['markets'] = market
-                                market_response = requests.get(url, params=params, timeout=10)
-                                market_response.raise_for_status()
-                                market_data = market_response.json()
-                                
-                                if market_data and 'data' in market_data:
-                                    # Merge game data
-                                    for game in market_data['data']:
-                                        game_id = game.get('id')
-                                        if game_id in game_dict:
-                                            # Merge bookmakers for existing game
-                                            existing_game = game_dict[game_id]
-                                            for bookmaker in game.get('bookmakers', []):
-                                                existing_bookmaker = next(
-                                                    (b for b in existing_game.get('bookmakers', []) 
-                                                     if b['key'] == bookmaker['key']),
-                                                    None
-                                                )
-                                                if existing_bookmaker:
-                                                    # Merge markets
-                                                    existing_bookmaker['markets'].extend(bookmaker.get('markets', []))
-                                                else:
-                                                    # Add new bookmaker
-                                                    existing_game.setdefault('bookmakers', []).append(bookmaker)
-                                        else:
-                                            # Add new game
-                                            game_dict[game_id] = game
-                                            combined_data['data'].append(game)
-                                    
-                                    success_count += 1
-                                    
-                            except requests.exceptions.HTTPError as market_error:
-                                # Individual market failed, continue to next
-                                continue
-                        
-                        # If we got any successful markets, save combined data
-                        if success_count > 0:
-                            self._save_to_cache(cache_key, combined_data)
-                            return True
-                
-                # Track all HTTP errors
-                with error_lock:
-                    error_summary[error_type] = error_summary.get(error_type, 0) + 1
-                
-                # Cache 404 as empty (data doesn't exist)
-                # Cache 422 as None to avoid retrying every time
-                if status_code == 404 or status_code == 422:
-                    self._save_to_cache(cache_key, None)
-                
-                return False
-                
-            except Exception as e:
-                # Track other error types (network, timeout, etc.)
-                error_type = type(e).__name__
-                
-                with error_lock:
-                    error_summary[error_type] = error_summary.get(error_type, 0) + 1
-                
-                # Don't cache - allow retry on next run
-                return False
-        
-        # Use ThreadPoolExecutor for parallel fetching (max 5 concurrent)
-        max_workers = 15
-        pbar = tqdm(total=len(to_fetch), desc="Fetching from API", unit="file", ncols=120,
-                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all fetch tasks
-            future_to_data = {executor.submit(fetch_one, *item): item for item in to_fetch}
-            
-            # Process as they complete
-            for future in as_completed(future_to_data):
-                success = future.result()
-                if success:
-                    fetched_from_api += 1
-                else:
-                    failed += 1
-                
-                pbar.update(1)
-                pbar.set_postfix({'fetched': fetched_from_api, 'failed': failed})
-        
-        pbar.close()
-        
-        elapsed = time.time() - start_time
-        total_loaded = loaded_from_cache + fetched_from_api
-        print(f"\n✅ Pre-loaded {total_loaded} files in {elapsed:.2f}s")
-        print(f"   From cache: {loaded_from_cache}, From API: {fetched_from_api}")
-        if failed > 0:
-            print(f"   ⚠️  Failed/unavailable: {failed}")
-            if error_summary:
-                print(f"   📊 Error breakdown:")
-                for error_type, count in sorted(error_summary.items(), key=lambda x: x[1], reverse=True):
-                    print(f"      • {error_type}: {count}")
-        if fetched_from_api > 0:
-            print(f"   💰 API credits used: ~{fetched_from_api * 10}")
-        print(f"   Memory cache size: ~{len(str(self.memory_cache)) / 1024 / 1024:.1f} MB\n")
-    
-    def bulk_get_historical_odds(self, sports: List[str], timestamps: List[str], markets: str = 'h2h') -> Dict:
-        """Bulk fetch all historical odds data for multiple sports and timestamps.
-        
-        Args:
-            sports: List of sport keys
-            timestamps: List of ISO timestamps
-            markets: Markets to query
-            
-        Returns:
-            Dictionary mapping (sport, timestamp) -> (data, was_cached)
-        """
-        total_lookups = len(sports) * len(timestamps)
-        print(f"\n📦 Bulk fetching {total_lookups} historical odds snapshots...")
-        start_time = time.time()
-        
-        results = {}
-        cache_hits = 0
-        cache_misses = 0
-        
-        for sport in sports:
-            for timestamp in timestamps:
-                cache_key = self._get_cache_key(sport, timestamp, markets)
-                
-                # Direct memory cache lookup (skip function call overhead)
-                if cache_key in self.memory_cache:
-                    results[(sport, timestamp)] = (self.memory_cache[cache_key], True)
-                    cache_hits += 1
-                else:
-                    # Would need API call - skip for now
-                    results[(sport, timestamp)] = (None, False)
-                    cache_misses += 1
-        
-        elapsed = time.time() - start_time
-        hit_rate = (cache_hits / total_lookups * 100) if total_lookups > 0 else 0
-        print(f"✅ Bulk fetch complete in {elapsed:.3f}s")
-        print(f"   Cache hits: {cache_hits}/{total_lookups} ({hit_rate:.1f}%)")
-        if cache_misses > 0:
-            print(f"   ⚠️  Cache misses: {cache_misses} (these will be skipped)")
-        print()
-        
-        return results
-        
-    def get_historical_odds(self, sport: str, date: str, markets: str = 'h2h') -> Optional[tuple]:
-        """
-        Get historical odds for a specific date (with caching).
-        
-        Args:
-            sport: Sport key (e.g., 'soccer_epl')
-            date: ISO timestamp (e.g., '2024-01-01T12:00:00Z')
-            markets: Markets to query
-            
-        Returns:
-            Tuple of (data, was_cached) or (None, False) if error
-        """
-        # Check cache first
-        cache_key = self._get_cache_key(sport, date, markets)
-        cached_data = self._load_from_cache(cache_key)
-        
-        if cached_data:
-            return (cached_data, True)
-        
-        # Fetch from API
         url = f"{self.base_url}/historical/sports/{sport}/odds"
         params = {
             'apiKey': self.api_key,
             'bookmakers': ','.join(self.scanner.optimized_bookmakers),
-            'markets': markets,
+            'markets': self.scanner.markets,
             'oddsFormat': self.scanner.odds_format,
             'date': date
         }
@@ -471,175 +116,106 @@ class HistoricalBacktester:
         try:
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
-            
-            # Check remaining quota (show less frequently to reduce output)
-            remaining = response.headers.get('x-requests-remaining')
-            if remaining and int(float(remaining)) % 10 == 0:
-                print(f"  📊 API Requests Remaining: {remaining}")
-            
-            data = response.json()
-            
-            # Save to cache
-            self._save_to_cache(cache_key, data)
-            
-            return (data, False)
-        except requests.exceptions.RequestException as e:
-            # Silently skip errors - likely outright/championship markets with wrong market type
-            return (None, False)
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            if e.response and e.response.status_code == 422:
+                # Try individual markets
+                return self._fetch_markets_individually(url, params)
+            return None
+        except Exception:
+            return None
     
-    def get_historical_scores(self, sport: str, date_from: str, date_to: str) -> Optional[List[Dict]]:
-        """
-        Get historical scores/results for games in date range (with caching).
+    def _fetch_markets_individually(self, url: str, params: dict) -> Optional[Dict]:
+        """Fetch markets individually when combined request fails."""
+        market_list = [m.strip() for m in self.scanner.markets.split(',')]
+        if len(market_list) <= 1:
+            return None
         
-        NOTE: The Odds API doesn't provide historical scores through the scores endpoint.
-        Historical scores are included in the historical odds data itself.
-        This method fetches the historical odds data to extract the scores.
+        combined_data = {'data': []}
+        game_dict = {}
         
-        Args:
-            sport: Sport key
-            date_from: Start date (ISO format)
-            date_to: End date (ISO format)
-            
-        Returns:
-            List of completed games with scores
-        """
-        # Skip score fetching for outright/championship winner markets (futures)
-        if '_winner' in sport or '_championship' in sport:
-            print(f"  ⏭️  Skipping (outright market, no game scores)")
-            return []
+        for market in market_list:
+            try:
+                params['markets'] = market
+                response = requests.get(url, params=params, timeout=10)
+                response.raise_for_status()
+                market_data = response.json()
+                
+                if market_data and 'data' in market_data:
+                    for game in market_data['data']:
+                        game_id = game.get('id')
+                        if game_id in game_dict:
+                            # Merge bookmakers
+                            existing_game = game_dict[game_id]
+                            for bookmaker in game.get('bookmakers', []):
+                                existing_bookmaker = next(
+                                    (b for b in existing_game.get('bookmakers', []) 
+                                     if b['key'] == bookmaker['key']),
+                                    None
+                                )
+                                if existing_bookmaker:
+                                    existing_bookmaker['markets'].extend(bookmaker.get('markets', []))
+                                else:
+                                    existing_game.setdefault('bookmakers', []).append(bookmaker)
+                        else:
+                            game_dict[game_id] = game
+                            combined_data['data'].append(game)
+            except Exception:
+                continue
         
-        # Check cache first
-        cache_key = self._get_cache_key(sport, f"scores_{date_from}_{date_to}", "scores")
-        cached_data = self._load_from_cache(cache_key)
-        
-        if cached_data:
-            print(f"💾 Loaded scores from cache")
-            return cached_data
-        
-        # Fetch historical odds which include scores for completed games
-        # We fetch one snapshot well after the period to ensure all games have completed
-        # But cap it to at least 7 days ago (games need time to complete and be marked as such)
-        from datetime import timezone
-        end_date = datetime.fromisoformat(date_to)
-        today = datetime.now(timezone.utc)
-        # Use at least 7 days ago, and normalize to noon UTC for consistency
-        seven_days_ago = (today - timedelta(days=7)).replace(hour=12, minute=0, second=0, microsecond=0)
-        snapshot_time_date = min(end_date + timedelta(days=90), seven_days_ago)
-        snapshot_time = snapshot_time_date.replace(hour=12, minute=0, second=0, microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
-        
-        result = self.get_historical_odds(sport, snapshot_time)
-        if not result:
-            print(f"  ⚠️  No historical data available for scores")
-            return []
-        
-        historical_data, was_cached = result
-        
-        if not historical_data or 'data' not in historical_data:
-            print(f"  ⚠️  No historical data available for scores")
-            return []
-        
-        # Extract scores from historical data
-        # NOTE: Historical odds snapshots don't include game results
-        # The API only provides results in real-time via the scores endpoint (max 3 days back)
-        # For older historical backtests, results must be simulated
-        scores = []
-        total_games = len(historical_data.get('data', []))
-        for game in historical_data['data']:
-            if game.get('completed', False) and game.get('scores'):
-                scores.append(game)
-        
-        if len(scores) == 0 and total_games > 0:
-            print(f"  ℹ️  Found {total_games} games (results will be simulated)")
-        elif len(scores) > 0:
-            print(f"✅ Loaded {len(scores)} completed games out of {total_games} total games")
-        
-        # Save to cache
-        self._save_to_cache(cache_key, scores)
-        
-        return scores
+        return combined_data if combined_data['data'] else None
     
-    def find_positive_ev_bets(self, historical_data: Dict, sport: str, snapshot_time: Optional[datetime] = None) -> List[Dict]:
+    def find_positive_ev_bets(self, historical_data: Dict, sport: str, 
+                             snapshot_time: Optional[datetime] = None) -> List[Dict]:
         """
         Analyze historical odds snapshot to find +EV bets.
-        
-        This method uses the scanner's analyze_games_for_ev() to ensure the backtest
-        uses exactly the same logic as live scanning.
-        
-        Args:
-            historical_data: Response from historical odds API
-            sport: Sport key for context
-            snapshot_time: Time of the snapshot (for backtesting) - if None, uses current time
-            
-        Returns:
-            List of positive EV betting opportunities
+        Uses scanner's analyze_games_for_ev() for consistency with live scanning.
         """
         if not historical_data or 'data' not in historical_data:
             return []
         
-        # Keep scanner's Kelly bankroll at initial value for consistent bet sizing
+        # Keep scanner's Kelly bankroll at initial value
         self.scanner.kelly.bankroll = self.initial_bankroll
         
-        games = historical_data['data']
-        
-        # Use the scanner's core analysis method with backtest-specific parameters
         opportunities = self.scanner.analyze_games_for_ev(
-            games=games,
+            games=historical_data['data'],
             sport=sport,
-            reference_time=snapshot_time  # Use snapshot time instead of current time
+            reference_time=snapshot_time
         )
         
-        # Convert scanner's output format to backtest format
-        # Scanner returns ev_percentage (0-100), backtest expects ev (0-1)
-        # Keep kelly_stake dict intact for BetLogger, but also add flat fields for backtest
+        # Convert scanner's output format
         for opp in opportunities:
             if 'ev_percentage' in opp:
                 opp['ev'] = opp['ev_percentage'] / 100
             if 'kelly_stake' in opp:
-                # Keep kelly_stake dict for BetLogger
-                # Also add flat fields for backward compatibility
                 opp['kelly_pct'] = opp['kelly_stake']['kelly_percentage'] / 100
                 opp['stake'] = opp['kelly_stake']['recommended_stake']
             if 'true_probability' in opp and opp['true_probability'] >= 1:
-                # Scanner returns percentage (0-100), backtest expects decimal (0-1)
                 opp['true_probability'] = opp['true_probability'] / 100
         
         return opportunities
     
     def _prefetch_game_results(self, bets: List[Dict], current_time: datetime):
-        """
-        Pre-fetch all unique game results in parallel to speed up settlement.
-        Stores results in memory cache for instant lookup during settlement.
-        
-        Args:
-            bets: List of bets to fetch results for
-            current_time: Current time in backtest for look-ahead protection
-        """
-        # Extract unique games that need results
+        """Pre-fetch all unique game results in parallel."""
         unique_games = {}
+        
         for bet in bets:
             game_str = bet.get('game', '')
             if ' @ ' not in game_str:
                 continue
             
-            # Check if game has completed (same logic as determine_bet_result)
+            # Check if game has completed
             commence_time = bet.get('commence_time', '')
             if commence_time and current_time:
                 try:
-                    if isinstance(commence_time, str):
-                        game_time = self._parse_timestamp(commence_time)
-                    else:
-                        game_time = commence_time
-                    
-                    from datetime import timedelta
+                    game_time = self._parse_timestamp(commence_time) if isinstance(commence_time, str) else commence_time
                     game_completion_time = game_time + timedelta(hours=4)
-                    
-                    # Skip games not yet completed
                     if current_time < game_completion_time:
                         continue
                 except Exception:
                     continue
             
-            # Create unique key for this game
+            # Extract game info
             away_team, home_team = game_str.split(' @ ')
             away_team = away_team.strip()
             home_team = home_team.strip()
@@ -660,19 +236,12 @@ class HistoricalBacktester:
         
         print(f"   Fetching results for {len(unique_games)} unique games...")
         
-        # Fetch results in parallel with rate limiting
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        import threading
-        
         results_cache = {}
         failed_fetches = []
         cache_lock = threading.Lock()
         
-        # Use 20 parallel workers for good balance of speed and API respect
-        max_workers = 20
-        
         def fetch_one_game(game_key, game_info):
-            """Fetch a single game result with proper error handling."""
+            """Fetch a single game result."""
             try:
                 result = self.espn_scraper.get_game_result(
                     sport=game_info['sport'],
@@ -684,16 +253,13 @@ class HistoricalBacktester:
                 if result:
                     return (game_key, result, None)
                 else:
-                    # Log when result lookup returns None
                     return (game_key, None, {
                         'game': f"{game_info['away_team']} @ {game_info['home_team']}",
                         'sport': game_info['sport'],
                         'date': str(game_info['game_date'].date()),
                         'reason': 'No result returned'
                     })
-                    
             except Exception as e:
-                # Log exceptions during fetching
                 return (game_key, None, {
                     'game': f"{game_info['away_team']} @ {game_info['home_team']}",
                     'sport': game_info['sport'],
@@ -701,18 +267,14 @@ class HistoricalBacktester:
                     'reason': f'{type(e).__name__}: {str(e)}'
                 })
         
-        # Progress bar for fetching
-        from tqdm import tqdm
         pbar = tqdm(total=len(unique_games), desc="Fetching results", unit="game", ncols=100)
         
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all fetch tasks
+        with ThreadPoolExecutor(max_workers=20) as executor:
             future_to_game = {
                 executor.submit(fetch_one_game, game_key, game_info): (game_key, game_info)
                 for game_key, game_info in unique_games.items()
             }
             
-            # Process as they complete
             for future in as_completed(future_to_game):
                 game_key, result, failure = future.result()
                 
@@ -727,96 +289,45 @@ class HistoricalBacktester:
         
         pbar.close()
         
-        # Store in memory cache for faster lookups during settlement
-        self.memory_cache.update(results_cache)
-        print(f"   ✅ Cached {len(results_cache)} game results in memory")
+        # Store in cache
+        self.game_results_cache.update(results_cache)
+        print(f"   ✅ Cached {len(results_cache)} game results")
         
         if failed_fetches:
             print(f"   ⚠️  Failed to fetch {len(failed_fetches)} games")
-            
-            # Show sample of failures by sport
-            from collections import Counter
-            sport_failures = Counter(f['sport'] for f in failed_fetches)
-            print(f"\n   Top sports with fetch failures:")
-            for sport, count in sport_failures.most_common(10):
-                print(f"      {sport}: {count} games")
-            
-            # Save detailed failure log
-            failure_log_path = Path('data/fetch_failures.json')
-            try:
-                with open(failure_log_path, 'w') as f:
-                    json.dump(failed_fetches, f, indent=2)
-                print(f"\n   📝 Detailed failure log saved to: {failure_log_path}")
-            except Exception as e:
-                print(f"   ⚠️  Could not save failure log: {e}")
-        
-        print()
+            Path('data/settlement_failures.json').write_text(json.dumps(failed_fetches, indent=2))
     
-    def determine_bet_result(self, bet: Dict, scores_data: Dict, current_time: Optional[datetime] = None) -> Optional[str]:
-        """
-        Determine if a bet won or lost based on actual game results.
-        
-        This method first tries to use Google Search API (if enabled) to fetch
-        real game results. If that fails or is disabled, falls back to pre-indexed
-        scores data.
-        
-        CRITICAL: Only fetches results for games that have ALREADY completed at current_time
-        to prevent look-ahead bias in backtesting.
-        
-        Args:
-            bet: Bet details (must include 'game', 'sport', 'outcome', 'market', 'commence_time')
-            scores_data: Pre-indexed scores data by game matchup (fallback)
-            current_time: Current time in backtest (None = use actual current time for live trading)
-            
-        Returns:
-            'won', 'lost', or None if result unknown
-        """
-        # ANTI-LOOK-AHEAD PROTECTION:
-        # Only check game results if the game has already completed
+    def determine_bet_result(self, bet: Dict, current_time: Optional[datetime] = None) -> Optional[str]:
+        """Determine if a bet won or lost based on actual game results."""
+        # Anti-look-ahead protection
         commence_time = bet.get('commence_time', '')
         if commence_time and current_time:
-            # Parse commence time
             try:
-                if isinstance(commence_time, str):
-                    game_time = self._parse_timestamp(commence_time)
-                else:
-                    game_time = commence_time
-                
-                # Add buffer for game completion (e.g., 4 hours for most sports)
-                # This ensures the game has actually finished before we look up results
-                from datetime import timedelta
+                game_time = self._parse_timestamp(commence_time) if isinstance(commence_time, str) else commence_time
                 game_completion_time = game_time + timedelta(hours=4)
-                
-                # If current backtest time is before game completion, result is not yet known
                 if current_time < game_completion_time:
                     return None
             except Exception:
-                # If we can't parse the time, be conservative and return None
                 return None
         
-        # Use ESPN API with SerpAPI fallback
+        # Try ESPN API
         if self.espn_scraper:
             try:
-                # Parse team names from the game string (e.g., "Buffalo Bills @ New England Patriots")
                 game_str = bet.get('game', '')
                 if ' @ ' in game_str:
                     away_team, home_team = game_str.split(' @ ')
                     away_team = away_team.strip()
                     home_team = home_team.strip()
-                    
-                    # Get game date from commence_time
-                    commence_time_str = bet.get('commence_time', '')
                     sport = bet.get('sport', '')
                     
-                    # Parse game date
-                    if commence_time_str:
-                        game_date = self._parse_timestamp(commence_time_str)
+                    if commence_time:
+                        game_date = self._parse_timestamp(commence_time)
                         
-                        # Check memory cache first (from prefetch)
+                        # Check cache first
                         game_key = f"{sport}|{away_team}|{home_team}|{game_date.date()}"
-                        result = self.memory_cache.get(game_key)
+                        result = self.game_results_cache.get(game_key)
                         
-                        # If not in cache, fetch it (fallback for edge cases)
+                        # Fetch if not cached
                         if not result:
                             result = self.espn_scraper.get_game_result(
                                 sport=sport,
@@ -830,12 +341,9 @@ class HistoricalBacktester:
                             away_score = result['away_score']
                             espn_home = result.get('home_team', home_team)
                             espn_away = result.get('away_team', away_team)
-                            source = result.get('source', 'unknown')
                             
-                            print(f"   ✓ Settled via {source.upper()}: {espn_away} {away_score} @ {espn_home} {home_score}")
-                            
-                            # Use unified BetSettler to determine result
-                            result = BetSettler.determine_bet_result_backtest(
+                            # Use BetSettler to determine result
+                            return BetSettler.determine_bet_result_backtest(
                                 bet=bet,
                                 home_team=home_team,
                                 away_team=away_team,
@@ -844,81 +352,51 @@ class HistoricalBacktester:
                                 espn_home=espn_home,
                                 espn_away=espn_away
                             )
-                            
-                            if result:
-                                return result
-                
-            except Exception as e:
-                # If ESPN/SerpAPI fails, return None
+            except Exception:
                 pass
         
         return None
     
     def place_bet(self, bet: Dict, result: Optional[str] = None, bet_timestamp: Optional[str] = None):
-        """
-        Simulate placing a bet and update bankroll only when bet settles.
-        
-        Args:
-            bet: Bet details (opportunity dictionary from scanner)
-            result: 'won', 'lost', or None (pending)
-            bet_timestamp: When the bet was placed (for charting)
-        """
+        """Simulate placing a bet and update bankroll when settled."""
         stake = bet['stake']
-        commence_time = bet.get('commence_time')
         
-        # Log bet to CSV immediately when placing (as pending)
-        # Store the timestamp for later updates
+        # Store timestamp
         bet_placed_timestamp = bet.get('bet_placed_at', bet_timestamp)
         if bet_placed_timestamp:
-            # Convert to proper timestamp format if needed
-            if isinstance(bet_placed_timestamp, str):
-                # If it's already in the right format, use it
-                csv_timestamp = bet_placed_timestamp
-            else:
-                csv_timestamp = bet_placed_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            csv_timestamp = bet_placed_timestamp if isinstance(bet_placed_timestamp, str) else bet_placed_timestamp.strftime('%Y-%m-%d %H:%M:%S')
         else:
             csv_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # Store the timestamp in the bet for later updates
         bet['csv_timestamp'] = csv_timestamp
         
-        # Only update bankroll for settled bets
+        # Update bankroll for settled bets
         if result == 'won':
             profit = stake * (bet['odds'] - 1)
-            self.current_bankroll += profit  # Just add the profit (net gain)
+            self.current_bankroll += profit
             actual_profit = profit
-            
-            # Record bankroll at settlement time
             if bet_timestamp:
                 self.bankroll_timestamps.append(bet_timestamp)
                 self.bankroll_history.append(self.current_bankroll)
-                
         elif result == 'lost':
-            self.current_bankroll -= stake  # Deduct the stake (net loss)
+            self.current_bankroll -= stake
             actual_profit = -stake
-            
-            # Record bankroll at settlement time
             if bet_timestamp:
                 self.bankroll_timestamps.append(bet_timestamp)
                 self.bankroll_history.append(self.current_bankroll)
         else:
-            # Pending - don't update bankroll yet
             actual_profit = 0
         
         bet['result'] = result
         bet['actual_profit'] = actual_profit
         bet['bankroll_after'] = self.current_bankroll if result is not None else None
         
-        # Add to in-memory tracking
         self.bets_placed.append(bet)
         
-        # Log to CSV via BetLogger with the backtest timestamp
-        # If this is first time placing (result is None), log as pending
+        # Log to CSV
         if result is None:
             self.bet_logger.log_bet(bet, bet_placed=True, notes="Backtest", timestamp=csv_timestamp)
         else:
-            # If bet is already settled when placing (shouldn't happen normally), 
-            # log and immediately update
             self.bet_logger.log_bet(bet, bet_placed=True, notes="Backtest", timestamp=csv_timestamp)
             bet_result_status = 'win' if result == 'won' else 'loss' if result == 'lost' else 'void'
             self.bet_logger.update_bet_result(
@@ -930,111 +408,62 @@ class HistoricalBacktester:
     
     def backtest(self, sports: List[str], start_date: str, end_date: str, 
                  snapshot_interval_hours: int = 12) -> Dict:
-        """
-        Run backtest over a date range for one or more sports.
-        
-        Args:
-            sports: List of sport keys (e.g., ['soccer_epl', 'basketball_nba'])
-            start_date: Start date (YYYY-MM-DD)
-            end_date: End date (YYYY-MM-DD)
-            snapshot_interval_hours: Hours between snapshots (default 12)
-            
-        Returns:
-            Backtest results
-        """
-        # Support single sport string for backward compatibility
+        """Run backtest over a date range."""
         if isinstance(sports, str):
             sports = [sports]
+        
+        # Auto-adjust interval to match API availability
+        if snapshot_interval_hours < 6:
+            print(f"⚠️  Adjusting interval from {snapshot_interval_hours}h to 6h (API limitation)")
+            snapshot_interval_hours = 6
         
         print(f"\n{'='*80}")
         print(f"HISTORICAL BACKTESTING")
         print(f"{'='*80}")
         print(f"Sports: {', '.join(sports)}")
         print(f"Date Range: {start_date} to {end_date}")
+        print(f"Snapshot Interval: {snapshot_interval_hours} hours")
         print(f"Initial Bankroll: £{self.initial_bankroll:.2f}")
         print(f"Kelly Fraction: {self.scanner.kelly_fraction}")
         print(f"Min EV: {self.scanner.min_ev_threshold*100:.1f}%")
-        print(f"Min True Probability: {self.scanner.min_true_probability*100:.1f}%")
-        if self.scanner.min_kelly_percentage > 0:
-            print(f"Min Kelly Percentage: {self.scanner.min_kelly_percentage*100:.1f}%")
-        if self.scanner.max_odds > 0:
-            print(f"Max Odds: {self.scanner.max_odds:.1f}")
-        print(f"Sharp Books: {', '.join(self.scanner.sharp_books)}")
-        print(f"Betting Bookmakers: {', '.join(self.scanner.betting_bookmakers)}")
-        print(f"One Bet Per Outcome: {self.scanner.one_bet_per_outcome}")
         print(f"{'='*80}\n")
         
-        # Parse dates and make them timezone-aware (UTC) for comparison with API data
-        from datetime import timezone
+        # Parse dates
         start = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
         end = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
         current = start
         
-        snapshot_count = 0
         total_opportunities = 0
         
-        # Determine result source
-        if self.espn_scraper:
-            print("\n📋 Using ESPN API (with SerpAPI fallback) for real game results\n")
-        else:
-            print("\n📋 Using simulated results based on true win probabilities\n")
-        scores_data = {}
-        
-        # Calculate total snapshots for progress bar
+        # Calculate total snapshots
         total_seconds = (end - start).total_seconds()
         interval_seconds = snapshot_interval_hours * 3600
         total_snapshots = int(total_seconds / interval_seconds) + 1
-        
-        # Pre-generate all timestamps
-        all_timestamps = []
-        temp_current = start
-        while temp_current <= end:
-            all_timestamps.append(temp_current.strftime('%Y-%m-%dT%H:%M:%SZ'))
-            temp_current += timedelta(hours=snapshot_interval_hours)
-        
-        # Pre-load only the cache files needed for this date range
-        self.preload_cache(sports=sports, timestamps=all_timestamps)
-        
-        # Bulk fetch all historical odds data upfront (eliminates 750 function calls)
-        odds_data_cache = self.bulk_get_historical_odds(sports, all_timestamps)
-        
-        # Free memory: clear timestamp list (data is now in odds_data_cache)
-        all_timestamps.clear()
-        all_timestamps = None
-        
-        # Create progress bar with finer granularity (update per sport processed)
         total_iterations = total_snapshots * len(sports)
-        pbar = tqdm(total=total_iterations, desc="Backtesting", unit="check", ncols=120, 
-                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
         
+        pbar = tqdm(total=total_iterations, desc="Backtesting", unit="check", ncols=120)
+        
+        # Main backtest loop
         while current <= end:
-            snapshot_count += 1
             timestamp = current.strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-            # Collect opportunities from all sports for this timestamp
             all_opportunities = []
             
             for sport in sports:
-                # Direct lookup from bulk-fetched cache (no function call overhead)
-                cache_result = odds_data_cache.get((sport, timestamp))
-                historical_data, was_cached = cache_result if cache_result else (None, False)
+                historical_data = self.get_historical_odds(sport, timestamp)
                 
                 if historical_data:
-                    # Find +EV opportunities using scanner, passing snapshot time for proper filtering
                     opportunities = self.find_positive_ev_bets(historical_data, sport, snapshot_time=current)
                     
-                    # Add sport info to each opportunity
                     for opp in opportunities:
                         opp['sport'] = sport
                     
                     all_opportunities.extend(opportunities)
                 
-                # Update progress bar after each sport
                 pbar.update(1)
                 pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities})
             
             if all_opportunities:
-                # Filter out outcomes we've already bet on
+                # Filter already bet outcomes
                 new_opportunities = []
                 for opp in all_opportunities:
                     outcome_key = (opp['game'], opp['market'], opp['outcome'])
@@ -1044,83 +473,48 @@ class HistoricalBacktester:
                 
                 if new_opportunities:
                     total_opportunities += len(new_opportunities)
-                    pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities})
-                    
-                    # Batch process all bets for this snapshot
-                    import random
-                    won_count = 0
-                    lost_count = 0
-                    pending_count = 0
                     
                     for opp in new_opportunities:
-                        # Don't settle during backtest - settle all at the end
-                        result = None
-                        pending_count += 1
-                        
-                        # Store when this bet was placed (discovered), not game time
                         opp['bet_placed_at'] = timestamp
-                        self.place_bet(opp, result, bet_timestamp=timestamp)
+                        self.place_bet(opp, result=None, bet_timestamp=timestamp)
                     
-                    # Update postfix with latest stats
-                    pbar.set_postfix({'bets': len(self.bets_placed), 'opps': total_opportunities, 
-                                    'bankroll': f'£{self.current_bankroll:.0f}'})
+                    pbar.set_postfix({
+                        'bets': len(self.bets_placed), 
+                        'opps': total_opportunities,
+                        'bankroll': f'£{self.current_bankroll:.0f}'
+                    })
             
-            # Free memory: clear opportunities list for this timestamp
-            all_opportunities.clear()
-            
-            # Move to next snapshot
             current += timedelta(hours=snapshot_interval_hours)
         
-        # Close progress bar
         pbar.close()
         
-        # Free memory: clear odds data cache (no longer needed after scanning phase)
-        if odds_data_cache:
-            cache_size_mb = len(str(odds_data_cache)) / 1024 / 1024
-            print(f"\n🧹 Clearing odds data cache ({cache_size_mb:.1f} MB)...")
-            odds_data_cache.clear()
-            odds_data_cache = None
-        
-        # Settle all pending bets at the end of backtest using Google results
+        # Settle pending bets
         pending_bets = [b for b in self.bets_placed if b.get('result') is None]
         if pending_bets:
             print(f"\n{'='*80}")
-            print(f"SETTLING PENDING BETS WITH GOOGLE RESULTS")
+            print(f"SETTLING PENDING BETS")
             print(f"{'='*80}")
-            print(f"Fetching real results for {len(pending_bets)} pending bets...\n")
+            print(f"Settling {len(pending_bets)} pending bets...\n")
             
-            # Clear odds cache to free memory before settlement
-            if self.memory_cache:
-                import sys
-                cache_size_mb = sys.getsizeof(self.memory_cache) / 1024 / 1024
-                print(f"🧹 Clearing odds cache to free memory ({cache_size_mb:.1f} MB)...")
-                self.memory_cache.clear()
-                print(f"✅ Memory freed. Cache will be rebuilt with game results only.\n")
-            
-            # Pre-fetch all unique game results in parallel to speed up settlement
+            # Pre-fetch results
             if self.espn_scraper:
-                print("⚡ Pre-fetching game results in parallel...")
+                print("⚡ Pre-fetching game results...")
                 self._prefetch_game_results(pending_bets, end)
-                print(f"✅ Pre-fetch complete. Now settling bets...\n")
+                print()
             
             settled_count = 0
             failed_count = 0
-            settlement_failures = []
+            csv_updates = {}
             
-            # Batch determine bet results in parallel (read-only operations on cached data)
-            print("⚡ Determining bet results in parallel...")
+            # Determine results in parallel
+            print("⚡ Determining bet results...")
             bet_results = {}
-            
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            import threading
             results_lock = threading.Lock()
             
             def determine_result_batch(bet_index, bet):
-                """Determine result for a single bet."""
-                result = self.determine_bet_result(bet, scores_data, current_time=end)
+                result = self.determine_bet_result(bet, current_time=end)
                 return (bet_index, result)
             
-            # Use 20 workers to determine results quickly
             with ThreadPoolExecutor(max_workers=20) as executor:
                 futures = {
                     executor.submit(determine_result_batch, i, bet): i 
@@ -1135,106 +529,61 @@ class HistoricalBacktester:
                     result_pbar.update(1)
                 result_pbar.close()
             
-            print(f"✅ Determined {len(bet_results)} results. Now applying sequentially...\n")
+            print(f"✅ Determined {len(bet_results)} results. Applying...\n")
             
-            # Prepare batch CSV updates
-            csv_updates = {}
-            
-            # Apply results sequentially (must be sequential for bankroll tracking)
+            # Apply results sequentially
             settle_pbar = tqdm(enumerate(pending_bets), total=len(pending_bets), 
-                             desc="Applying results", unit="bet", ncols=120,
-                             bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+                             desc="Applying results", unit="bet", ncols=120)
             
             for i, bet in settle_pbar:
                 result = bet_results.get(i)
                 
                 if result is not None:
-                    # Update bet result and bankroll
                     bet['result'] = result
                     
                     if result == 'won':
                         profit = bet['stake'] * (bet['odds'] - 1)
                         self.current_bankroll += profit
                         bet['actual_profit'] = profit
-                    else:  # lost
+                    else:
                         self.current_bankroll -= bet['stake']
                         bet['actual_profit'] = -bet['stake']
                     
                     bet['bankroll_after'] = self.current_bankroll
                     
-                    # Add to bankroll history - ALWAYS append for every settled bet
-                    # to ensure final bankroll tracking is accurate
-                    bet_time = bet.get('bet_placed_at') or bet.get('commence_time')
-                    if not bet_time:
-                        # Fallback: use current timestamp if somehow both are missing
-                        # This should never happen but ensures we don't skip bankroll updates
-                        bet_time = datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
-                    
+                    bet_time = bet.get('bet_placed_at') or bet.get('commence_time') or datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
                     self.bankroll_timestamps.append(bet_time)
                     self.bankroll_history.append(self.current_bankroll)
                     
-                    # Prepare CSV update (batch at end instead of individual writes)
                     csv_timestamp = bet.get('csv_timestamp')
                     if csv_timestamp:
-                        bet_result_status = 'win' if result == 'won' else 'loss' if result == 'lost' else 'void'
+                        bet_result_status = 'win' if result == 'won' else 'loss'
                         csv_updates[csv_timestamp] = (
                             bet_result_status,
                             bet['actual_profit'],
-                            "Settled via Google/ESPN"
+                            "Settled via ESPN"
                         )
                     
                     settled_count += 1
                 else:
                     failed_count += 1
-                    # Track which bets failed to settle
-                    settlement_failures.append({
-                        'game': bet.get('game'),
-                        'sport': bet.get('sport'),
-                        'commence_time': bet.get('commence_time'),
-                        'market': bet.get('market'),
-                        'outcome': bet.get('outcome')
-                    })
                 
-                # Update progress bar with current stats
                 settle_pbar.set_postfix({'settled': settled_count, 'failed': failed_count})
             
             settle_pbar.close()
             
-            # Batch update CSV file (single write operation instead of 36K writes!)
+            # Batch update CSV
             if csv_updates:
                 print(f"\n💾 Writing {len(csv_updates)} bet results to CSV...")
                 updated = self.bet_logger.batch_update_bet_results(csv_updates)
                 print(f"✅ Updated {updated} bets in CSV file")
             
-            print(f"\n✅ Settled {settled_count} bets with real Google results")
+            print(f"\n✅ Settled {settled_count} bets")
             if failed_count > 0:
-                print(f"❌ Failed to get results for {failed_count} bets (will be excluded from analysis)")
-                
-                # Analyze settlement failures
-                from collections import Counter
-                failed_sports = Counter(f['sport'] for f in settlement_failures)
-                failed_markets = Counter(f['market'] for f in settlement_failures)
-                
-                print(f"\n   Top sports with settlement failures:")
-                for sport, count in failed_sports.most_common(10):
-                    print(f"      {sport}: {count} bets")
-                
-                print(f"\n   Settlement failures by market:")
-                for market, count in failed_markets.most_common():
-                    print(f"      {market}: {count} bets")
-                
-                # Save settlement failure log
-                settlement_log_path = Path('data/settlement_failures.json')
-                try:
-                    with open(settlement_log_path, 'w') as f:
-                        json.dump(settlement_failures, f, indent=2)
-                    print(f"\n   📝 Settlement failure log saved to: {settlement_log_path}")
-                except Exception as e:
-                    print(f"   ⚠️  Could not save settlement log: {e}")
-            
+                print(f"❌ Failed to settle {failed_count} bets")
             print()
         
-        # Print ESPN/SerpAPI statistics if used
+        # Print ESPN stats
         if self.espn_scraper:
             self.espn_scraper.print_stats()
         
@@ -1250,18 +599,16 @@ class HistoricalBacktester:
             print("No bets were placed during backtest.")
             return {}
         
-        # Filter out pending/unsettled bets
         settled_bets = [b for b in self.bets_placed if b.get('result') is not None]
         pending_bets = [b for b in self.bets_placed if b.get('result') is None]
         
         total_bets = len(settled_bets)
         pending_count = len(pending_bets)
         
-        # Check if we have any settled bets
         if total_bets == 0:
-            print("No settled bets found during backtest.")
+            print("No settled bets found.")
             if pending_count > 0:
-                print(f"All {pending_count} bets are still pending (games haven't finished yet).")
+                print(f"All {pending_count} bets are pending.")
             return {}
         
         won_bets = sum(1 for b in settled_bets if b.get('result') == 'won')
@@ -1288,15 +635,10 @@ class HistoricalBacktester:
                 max_drawdown = drawdown
                 max_drawdown_pct = drawdown_pct
         
-        # Calculate actual EV stats from settled bets only
-        actual_evs = [b['ev'] for b in settled_bets]
-        avg_ev = sum(actual_evs) / len(actual_evs) if actual_evs else 0
-        
-        actual_odds = [b['odds'] for b in settled_bets]
-        avg_odds = sum(actual_odds) / len(actual_odds) if actual_odds else 0
-        
-        actual_probs = [b['true_probability'] for b in settled_bets]
-        avg_prob = sum(actual_probs) / len(actual_probs) if actual_probs else 0
+        # Stats
+        avg_ev = sum(b['ev'] for b in settled_bets) / total_bets
+        avg_odds = sum(b['odds'] for b in settled_bets) / total_bets
+        avg_prob = sum(b['true_probability'] for b in settled_bets) / total_bets
         
         # Print report
         print(f"BACKTEST RESULTS")
@@ -1319,7 +661,7 @@ class HistoricalBacktester:
         print(f"  ROI: {roi:.2f}%")
         print(f"  Avg Stake: £{total_staked/total_bets:.2f}")
         
-        print(f"\nActual Bet Characteristics:")
+        print(f"\nBet Characteristics:")
         print(f"  Avg Odds: {avg_odds:.3f}")
         print(f"  Avg True Probability: {avg_prob*100:.1f}%")
         print(f"  Avg EV: {avg_ev*100:.2f}%")
@@ -1327,10 +669,9 @@ class HistoricalBacktester:
         print(f"\nRisk Metrics:")
         print(f"  Max Drawdown: £{max_drawdown:.2f} ({max_drawdown_pct:.2f}%)")
         
-        # CSV export is now handled automatically by BetLogger during place_bet and settlement
-        print(f"💾 Bets logged to data/backtest_bet_history.csv")
+        print(f"\n💾 Bets logged to data/backtest_bet_history.csv")
         
-        # Show per-sport breakdown if multiple sports
+        # Per-sport breakdown
         sports_in_bets = set(b.get('sport') for b in settled_bets if b.get('sport'))
         if len(sports_in_bets) > 1:
             print(f"\nPer-Sport Breakdown:")
@@ -1368,11 +709,9 @@ class HistoricalBacktester:
     def save_results(self, results: Dict, filename: str = 'backtest_results.json'):
         """Save backtest results to file."""
         with open(filename, 'w') as f:
-            # Convert to JSON-serializable format
             output = {k: v for k, v in results.items() if k != 'bets'}
-            # Only add bets_sample if 'bets' key exists (single backtest, not Monte Carlo)
             if 'bets' in results:
-                output['bets_sample'] = results['bets'][:10]  # Save first 10 bets as sample
+                output['bets_sample'] = results['bets'][:10]
             json.dump(output, f, indent=2)
         
         print(f"💾 Results saved to {filename}")
@@ -1383,67 +722,26 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Backtest betting strategy using historical odds data',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Backtest EPL for January 2024, 12-hour snapshots
-  python backtest.py --sport soccer_epl --start 2024-01-01 --end 2024-01-31
-  
-  # Backtest La Liga for Q1 2024, 24-hour snapshots
-  python backtest.py --sport soccer_spain_la_liga --start 2024-01-01 --end 2024-03-31 --interval 24
-  
-  # Short test: 1 week of EPL
-  python backtest.py --sport soccer_epl --start 2024-01-01 --end 2024-01-07 --interval 24
-
-Note: Historical data costs 10 API credits per request. 
-A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
-        """
+        description='Backtest betting strategy using historical odds data'
     )
     
-    parser.add_argument(
-        '--sport', '-s',
-        type=str,
-        default=None,
-        help='Sport key (default: from BETTING_SPORTS in .env, or soccer_epl). Use comma-separated values for multiple sports.'
-    )
-    
-    parser.add_argument(
-        '--start',
-        type=str,
-        required=True,
-        help='Start date (YYYY-MM-DD)'
-    )
-    
-    parser.add_argument(
-        '--end',
-        type=str,
-        required=True,
-        help='End date (YYYY-MM-DD)'
-    )
-    
-    parser.add_argument(
-        '--interval',
-        type=int,
-        default=12,
-        help='Hours between snapshots (default: 12)'
-    )
-    
-    parser.add_argument(
-        '--output', '-o',
-        type=str,
-        default='backtest_results.json',
-        help='Output filename (default: backtest_results.json)'
-    )
+    parser.add_argument('--sport', '-s', type=str, default=None,
+                       help='Sport key (comma-separated for multiple sports)')
+    parser.add_argument('--start', type=str, required=True,
+                       help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end', type=str, required=True,
+                       help='End date (YYYY-MM-DD)')
+    parser.add_argument('--interval', type=int, default=12,
+                       help='Hours between snapshots (default: 12, min: 6)')
+    parser.add_argument('--output', '-o', type=str, default='backtest_results.json',
+                       help='Output filename')
     
     args = parser.parse_args()
     
-    # Determine sports to backtest
+    # Determine sports
     if args.sport:
-        # Use command-line argument (can be comma-separated)
         sports = [s.strip() for s in args.sport.split(',')]
     else:
-        # Use BETTING_SPORTS from .env
         betting_sports_str = os.getenv('BETTING_SPORTS', 'soccer_epl')
         sports = [s.strip() for s in betting_sports_str.split(',')]
     
@@ -1457,32 +755,27 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
         print("❌ Invalid date format. Use YYYY-MM-DD")
         return
     
-    # Calculate estimated cost
+    # Calculate cost estimate
     start = datetime.fromisoformat(start_date)
     end = datetime.fromisoformat(end_date)
     days = (end - start).days
     total_hours = days * 24
     snapshots = int(total_hours / args.interval) + 1
-    cost_per_sport = snapshots * 10
-    total_cost = cost_per_sport * len(sports)
+    total_cost = snapshots * len(sports) * 10
     
     print(f"\n⚠️  ESTIMATED COST:")
     print(f"   Days: {days}")
     print(f"   Sports: {len(sports)}")
     print(f"   Snapshots per sport: {snapshots}")
-    print(f"   Total snapshots: {snapshots * len(sports)}")
-    print(f"   API Credits: {total_cost}")
-    print(f"   (Each snapshot costs 10 credits)\n")
+    print(f"   API Credits: {total_cost}\n")
     
     response = input("Continue with backtest? (y/n): ").lower().strip()
     if response != 'y':
         print("Backtest cancelled.")
         return
     
-    # Run backtest with all sports together
+    # Run backtest
     backtester = HistoricalBacktester()
-    
-    # Run single backtest with Google results
     results = backtester.backtest(
         sports=sports,
         start_date=start_date,
@@ -1492,12 +785,6 @@ A 30-day backtest with 12-hour intervals = ~60 requests = 600 credits.
     
     if results:
         backtester.save_results(results, args.output)
-        
-        print("\n💡 TIP: Compare these results with your simulator:")
-        print(f"   Actual Avg EV: {results['avg_ev']*100:.2f}% vs Simulator: 2.91%")
-        print(f"   Actual Avg Odds: {results['avg_odds']:.2f} vs Simulator: 1.235")
-        print(f"   Actual Win Rate: {results['win_rate']*100:.1f}% vs Expected: 83%")
-        print(f"   Actual Avg True Prob: {results['avg_true_prob']*100:.1f}% vs Simulator: 83%")
 
 
 if __name__ == '__main__':
