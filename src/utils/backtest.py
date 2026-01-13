@@ -410,11 +410,6 @@ class HistoricalBacktester:
         if isinstance(sports, str):
             sports = [sports]
         
-        # Auto-adjust interval to match API availability
-        if snapshot_interval_hours < 6:
-            print(f"⚠️  Adjusting interval from {snapshot_interval_hours}h to 6h (API limitation)")
-            snapshot_interval_hours = 6
-        
         print(f"\n{'='*80}")
         print(f"HISTORICAL BACKTESTING")
         print(f"{'='*80}")
