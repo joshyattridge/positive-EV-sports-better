@@ -8,6 +8,7 @@ Backtests your positive EV betting strategy using real historical odds data.
 import os
 import requests
 import requests_cache
+import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
@@ -24,11 +25,14 @@ import threading
 
 load_dotenv()
 
-# Install requests-cache for transparent HTTP caching
-requests_cache.install_cache(
+# Create cached session for HTTP requests
+cached_session = requests_cache.CachedSession(
     'data/backtest_cache/api_cache',
     backend='sqlite',
-    expire_after=None  # Never expire for historical data
+    expire_after=None,  # Never expire for historical data
+    cache_control=False,  # Ignore Cache-Control headers
+    allowable_codes=(200, 404, 422),  # Cache all responses including errors
+    ignored_parameters=['apiKey']  # Don't include API key in cache key
 )
 
 
@@ -103,6 +107,7 @@ class HistoricalBacktester:
         """
         Get historical odds for a specific date.
         Uses requests-cache for automatic caching.
+        Fetches markets individually to avoid 422 errors.
         """
         url = f"{self.base_url}/historical/sports/{sport}/odds"
         params = {
@@ -113,17 +118,8 @@ class HistoricalBacktester:
             'date': date
         }
         
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.HTTPError as e:
-            if e.response and e.response.status_code == 422:
-                # Try individual markets
-                return self._fetch_markets_individually(url, params)
-            return None
-        except Exception:
-            return None
+        # Fetch markets individually (API often returns 422 for combined markets)
+        return self._fetch_markets_individually(url, params)
     
     def _fetch_markets_individually(self, url: str, params: dict) -> Optional[Dict]:
         """Fetch markets individually when combined request fails."""
@@ -136,8 +132,10 @@ class HistoricalBacktester:
         
         for market in market_list:
             try:
-                params['markets'] = market
-                response = requests.get(url, params=params, timeout=10)
+                # Create new params dict for each market to avoid mutation
+                market_params = params.copy()
+                market_params['markets'] = market
+                response = cached_session.get(url, params=market_params, timeout=10)
                 response.raise_for_status()
                 market_data = response.json()
                 
@@ -453,7 +451,7 @@ class HistoricalBacktester:
                 
                 if historical_data:
                     opportunities = self.find_positive_ev_bets(historical_data, sport, snapshot_time=current)
-                    
+
                     for opp in opportunities:
                         opp['sport'] = sport
                     

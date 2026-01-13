@@ -74,18 +74,20 @@ class TestCaching:
     """Test caching functionality - now handled by requests-cache"""
     
     def test_requests_cache_installed(self):
-        """Test that requests-cache is properly installed"""
+        """Test that requests-cache session is configured"""
+        from src.utils.backtest import cached_session
         import requests_cache
-        # Verify the cache was installed during import
-        assert requests_cache.is_installed()
+        # Verify the cached session exists and is a CachedSession
+        assert isinstance(cached_session, requests_cache.CachedSession)
     
-    @patch('requests.get')
+    @patch('src.utils.backtest.cached_session.get')
     def test_http_caching_works(self, mock_get, backtester):
         """Test that HTTP requests are being cached"""
         # Setup mock response
         mock_response = Mock()
         mock_response.json.return_value = {'data': []}
         mock_response.raise_for_status.return_value = None
+        mock_response.from_cache = False
         mock_get.return_value = mock_response
         
         # First call should hit the API
@@ -96,8 +98,7 @@ class TestCaching:
         
         # Both should return same data
         assert result1 == result2
-        # API should only be called once (first time, then cached)
-        # Note: requests-cache may make the second call but return cached response
+        # cached_session.get should be called
         assert mock_get.call_count >= 1
 
 

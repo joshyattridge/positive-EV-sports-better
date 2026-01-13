@@ -131,7 +131,8 @@ class PositiveEVScanner:
             self.bet_repository = BetRepository()
         
         # Build optimized bookmakers list (your betting bookmakers + sharp books)
-        self.optimized_bookmakers = list(set(self.betting_bookmakers + self.sharp_books))
+        # Sort to ensure consistent order for HTTP caching
+        self.optimized_bookmakers = sorted(list(set(self.betting_bookmakers + self.sharp_books)))
         
         # Persistent file-based caching for odds data (30 minute cache)
         self._cache_file = Path('data/.odds_cache.pkl')
