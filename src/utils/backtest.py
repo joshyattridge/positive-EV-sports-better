@@ -158,6 +158,10 @@ class HistoricalBacktester:
                         else:
                             game_dict[game_id] = game
                             combined_data['data'].append(game)
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429:
+                    print(f"⚠️  Rate limit hit for market '{market}'")
+                continue
             except Exception:
                 continue
         
